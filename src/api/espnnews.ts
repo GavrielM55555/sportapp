@@ -106,19 +106,20 @@ export async function getNewsForPreferences(
   sports: ('nba' | 'football')[],
   leagueIds: number[]
 ): Promise<NewsArticle[]> {
-  const fetches: Promise<NewsArticle[]>[] = [];
-  if (sports.includes('nba')) fetches.push(getNbaNews(20));
-  if (sports.includes('football')) fetches.push(getFootballNews(leagueIds, 30));
+  const fetches: Promise<NewsArticle[]>[] =
+    sports.length === 0
+      ? [getNbaNews(15), getFootballNews([], 15)]  // no prefs → general mix
+      : [
+          ...(sports.includes('nba') ? [getNbaNews(20)] : []),
+          ...(sports.includes('football') ? [getFootballNews(leagueIds, 30)] : []),
+        ];
 
-  if (fetches.length === 0) {
-    // No prefs → general mix
-    return Promise.all([getNbaNews(10), getFootballNews([], 10)]).then(([a, b]) =>
-      [...a, ...b].sort((x, y) => new Date(y.publishedAt).getTime() - new Date(x.publishedAt).getTime())
-    );
-  }
-
-  const results = await Promise.all(fetches);
-  return results
-    .flat()
+  // Use allSettled so one failing source doesn't kill the whole feed
+  const results = await Promise.allSettled(fetches);
+  const articles = results
+    .flatMap(r => (r.status === 'fulfilled' ? r.value : []))
     .sort((a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime());
+
+  if (articles.length === 0) throw new Error('No news available');
+  return articles;
 }
