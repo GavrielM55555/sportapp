@@ -711,6 +711,15 @@ function PlayoffPredictions({ group }: { group: Group }) {
           series={selectedSeries}
           groupId={group.id}
           onClose={() => setSelectedSeries(null)}
+          onSaved={async () => {
+            setSelectedSeries(null);
+            // Reload predictions so picks show immediately without refresh
+            const snap = await getDocs(query(
+              collection(db, 'series_predictions'),
+              where('groupId', '==', group.id)
+            ));
+            setAllPredictions(snap.docs.map(d => ({ id: d.id, ...d.data() } as SeriesPrediction)));
+          }}
         />
       )}
     </ScrollView>

@@ -17,11 +17,12 @@ interface Props {
   series: PlayoffSeries;
   groupId?: string;
   onClose: () => void;
+  onSaved?: () => void;
 }
 
 const GAME_OPTIONS = [4, 5, 6, 7] as const;
 
-export function PredictSeriesModal({ series, groupId, onClose }: Props) {
+export function PredictSeriesModal({ series, groupId, onClose, onSaved }: Props) {
   const { user } = useAuthContext();
   const [selectedTeamId, setSelectedTeamId] = useState<number | null>(null);
   const [selectedGames, setSelectedGames] = useState<4 | 5 | 6 | 7 | null>(null);
@@ -59,7 +60,7 @@ export function PredictSeriesModal({ series, groupId, onClose }: Props) {
       } else {
         await addDoc(collection(db, 'series_predictions'), prediction);
       }
-      onClose();
+      onSaved ? onSaved() : onClose();
     } catch (e) {
       Alert.alert('Error', 'Failed to save prediction.');
       console.error(e);

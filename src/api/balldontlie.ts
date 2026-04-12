@@ -142,15 +142,29 @@ export async function getUpcomingGames(): Promise<Game[]> {
   return getGamesByDates(dates);
 }
 
-/** Get playoff games for a season */
+/** Get playoff games for a season — paginates to get all games */
 export async function getPlayoffGames(season?: number): Promise<Game[]> {
   const s = season ?? currentNBASeason();
-  const data = await get<{ data: any[] }>('/games', {
-    seasons: [s],       // will become seasons[]=2025
-    postseason: 'true',
-    per_page: 100,
-  });
-  return data.data.map(mapGame);
+  const allGames: Game[] = [];
+  let cursor: number | undefined;
+
+  while (true) {
+    const params: Record<string, string | number | string[] | number[]> = {
+      seasons: [s],
+      postseason: 'true',
+      per_page: 100,
+    };
+    if (cursor !== undefined) params.cursor = cursor;
+
+    const data = await get<{ data: any[]; meta?: { next_cursor?: number } }>('/games', params);
+    allGames.push(...data.data.map(mapGame));
+
+    const nextCursor = data.meta?.next_cursor;
+    if (!nextCursor || data.data.length === 0) break;
+    cursor = nextCursor;
+  }
+
+  return allGames;
 }
 
 /** Group playoff games into series.

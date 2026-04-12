@@ -279,8 +279,12 @@ export default function ScoresScreen() {
 
   const footballDate = FOOTBALL_DAYS.find(d => d.offset === footballDayOffset)!.iso;
 
-  // NBA: load when date changes
-  useEffect(() => { loadNba(selectedDate); }, [selectedDate]);
+  // NBA: load when date changes (skip index 7 on mount — handled below)
+  const mountedRef = useRef(false);
+  useEffect(() => {
+    if (!mountedRef.current) return; // skip first render, mount effect handles it
+    loadNba(selectedDate);
+  }, [selectedDate]);
 
   // Football: load when football day changes
   useEffect(() => { if (sport === 'football') loadFootball(footballDate); }, [footballDayOffset]);
@@ -294,6 +298,7 @@ export default function ScoresScreen() {
 
   // Load NBA on mount + scroll date to today
   useEffect(() => {
+    mountedRef.current = true;
     loadNba(selectedDate);
     setTimeout(() => {
       dateScrollRef.current?.scrollTo({ x: TODAY_INDEX * 66 - 100, animated: false });
