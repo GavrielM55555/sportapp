@@ -4,7 +4,6 @@ import {
   GoogleAuthProvider,
   onAuthStateChanged,
   signInWithPopup,
-  signInWithRedirect,
   getRedirectResult,
   signOut,
   User,
@@ -47,13 +46,8 @@ export function useAuth() {
 
   const signInWithGoogle = async () => {
     const provider = new GoogleAuthProvider();
-    if (Platform.OS === 'web') {
-      // Redirect flow: sends user to Google, then back to the app
-      await signInWithRedirect(auth, provider);
-    } else {
-      const result = await signInWithPopup(auth, provider);
-      await upsertUserDoc(result.user);
-    }
+    const result = await signInWithPopup(auth, provider);
+    await upsertUserDoc(result.user);
   };
 
   const logout = () => signOut(auth);
