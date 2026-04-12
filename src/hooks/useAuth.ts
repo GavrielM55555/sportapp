@@ -1,8 +1,11 @@
 import { useEffect, useState } from 'react';
+import { Platform } from 'react-native';
 import {
   GoogleAuthProvider,
   onAuthStateChanged,
   signInWithPopup,
+  signInWithRedirect,
+  getRedirectResult,
   signOut,
   User,
 } from 'firebase/auth';
@@ -33,13 +36,24 @@ export function useAuth() {
       setLoading(false);
       if (u) upsertUserDoc(u).catch(console.error);
     });
+    // On web, handle redirect result after Google redirects back
+    if (Platform.OS === 'web') {
+      getRedirectResult(auth)
+        .then(result => { if (result?.user) upsertUserDoc(result.user).catch(console.error); })
+        .catch(console.error);
+    }
     return unsubscribe;
   }, []);
 
   const signInWithGoogle = async () => {
     const provider = new GoogleAuthProvider();
-    const result = await signInWithPopup(auth, provider);
-    await upsertUserDoc(result.user);
+    if (Platform.OS === 'web') {
+      // Redirect flow: sends user to Google, then back to the app
+      await signInWithRedirect(auth, provider);
+    } else {
+      const result = await signInWithPopup(auth, provider);
+      await upsertUserDoc(result.user);
+    }
   };
 
   const logout = () => signOut(auth);
