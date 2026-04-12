@@ -8,6 +8,16 @@ interface Props {
   myPrediction?: { predictedWinnerTeamId: number };
 }
 
+function formatGameTime(raw: string): string {
+  try {
+    const d = new Date(raw);
+    if (isNaN(d.getTime())) return raw;
+    return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+  } catch {
+    return raw;
+  }
+}
+
 export function GameCard({ game, onPredict, myPrediction }: Props) {
   const isLive = game.status === 'live';
   const isFinal = game.status === 'final';
@@ -63,7 +73,7 @@ export function GameCard({ game, onPredict, myPrediction }: Props) {
           ) : (
             <>
               <Text style={styles.vs}>VS</Text>
-              {game.time ? <Text style={styles.gameTime}>{game.time}</Text> : null}
+              {game.time ? <Text style={styles.gameTime}>{formatGameTime(game.time)}</Text> : null}
             </>
           )}
         </View>
