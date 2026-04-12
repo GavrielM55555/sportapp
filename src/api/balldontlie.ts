@@ -198,20 +198,24 @@ export function groupIntoSeries(games: Game[]): PlayoffSeries[] {
 
     // Split into individual series — a series ends when either team reaches 4 wins
     let chunk: Game[] = [];
-    let hw = 0, aw = 0;
 
     const pushSeries = (chunkGames: Game[], roundIndex: number) => {
       if (chunkGames.length === 0) return;
       const first = chunkGames[0];
+      // Use first game's home/away as the "canonical" team assignment for display
       const homeTeam = first.homeTeam;
       const awayTeam = first.awayTeam;
-      let homeWins = 0, awayWins = 0;
+
+      // Count wins per team ID (home/away rotates game by game)
+      const winsById = new Map<number, number>();
       chunkGames.forEach(g => {
         if (g.status === 'final' && g.homeScore !== null && g.awayScore !== null) {
-          if (g.homeScore > g.awayScore) homeWins++;
-          else awayWins++;
+          const winnerId = g.homeScore > g.awayScore ? g.homeTeam.id : g.awayTeam.id;
+          winsById.set(winnerId, (winsById.get(winnerId) ?? 0) + 1);
         }
       });
+      const homeWins = winsById.get(homeTeam.id) ?? 0;
+      const awayWins = winsById.get(awayTeam.id) ?? 0;
       const isComplete = homeWins === 4 || awayWins === 4;
       series.push({
         id: `${[homeTeam.id, awayTeam.id].sort().join('-')}-r${roundIndex}`,
@@ -228,20 +232,21 @@ export function groupIntoSeries(games: Game[]): PlayoffSeries[] {
       });
     };
 
+    // Split chunks by team wins (track per team ID, not home/away)
+    const winsInChunk = new Map<number, number>();
     let roundIndex = 0;
     for (const game of sorted) {
       chunk.push(game);
       if (game.status === 'final' && game.homeScore !== null && game.awayScore !== null) {
-        if (game.homeScore > game.awayScore) hw++;
-        else aw++;
-      }
-      // Series over — push and reset
-      if (hw === 4 || aw === 4) {
-        pushSeries(chunk, roundIndex++);
-        chunk = []; hw = 0; aw = 0;
+        const winnerId = game.homeScore > game.awayScore ? game.homeTeam.id : game.awayTeam.id;
+        winsInChunk.set(winnerId, (winsInChunk.get(winnerId) ?? 0) + 1);
+        const maxWins = Math.max(...winsInChunk.values());
+        if (maxWins === 4) {
+          pushSeries(chunk, roundIndex++);
+          chunk = []; winsInChunk.clear();
+        }
       }
     }
-    // Push any remaining games (in-progress series)
     if (chunk.length > 0) pushSeries(chunk, roundIndex);
   });
 

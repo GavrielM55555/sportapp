@@ -389,7 +389,7 @@ function PlayoffPredictions({ group }: { group: Group }) {
       if (!user) return; // wait for auth to resolve
       setError(null);
       try {
-        const games = await getPlayoffGames(2024); // TEMP: using 2024 season to test playoff UI
+        const games = await getPlayoffGames(currentNBASeason());
         setAllGames(games);
         // Filter out Play-In games (single-game matchups, not real series)
         const grouped = groupIntoSeries(games).filter(s => s.games.length >= 2);
@@ -642,8 +642,8 @@ function PlayoffPredictions({ group }: { group: Group }) {
                       </Text>
                     </View>
 
-                    {/* Pick button — always shown for testing, normally locked when round starts */}
-                    {true ? (
+                    {/* Pick button only shown before round starts */}
+                    {!roundStarted ? (
                       <TouchableOpacity
                         style={[styles.pickBtn, myPick && styles.pickBtnDone]}
                         onPress={() => setSelectedSeries(s)}
