@@ -375,6 +375,7 @@ function PlayoffPredictions({ group }: { group: Group }) {
   const [allGames, setAllGames] = useState<Game[]>([]);
   const [allPredictions, setAllPredictions] = useState<SeriesPrediction[]>([]);
   const [bonusPicks, setBonusPicks] = useState<PlayoffBonusPick[]>([]);
+  const [champPicks, setChampPicks] = useState<{ uid: string; teamId: number; teamAbbr: string }[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedSeries, setSelectedSeries] = useState<PlayoffSeries | null>(null);
@@ -383,6 +384,9 @@ function PlayoffPredictions({ group }: { group: Group }) {
   const [bonusSeriesTo7, setBonusSeriesTo7] = useState('');
   const [bonusOtGames, setBonusOtGames] = useState('');
   const [savingBonus, setSavingBonus] = useState(false);
+  // Championship pick state
+  const [showChampModal, setShowChampModal] = useState(false);
+  const [savingChamp, setSavingChamp] = useState(false);
 
   useEffect(() => {
     async function load() {
@@ -407,12 +411,17 @@ function PlayoffPredictions({ group }: { group: Group }) {
         ));
         const picks = bonusSnap.docs.map(d => ({ id: d.id, ...d.data() } as PlayoffBonusPick));
         setBonusPicks(picks);
-        // Pre-fill inputs if user already submitted
         const myPick = picks.find(p => p.uid === user.uid);
         if (myPick) {
           if (myPick.seriesTo7 !== undefined) setBonusSeriesTo7(String(myPick.seriesTo7));
           if (myPick.otGames !== undefined) setBonusOtGames(String(myPick.otGames));
         }
+
+        const champSnap = await getDocs(query(
+          collection(db, 'championship_picks'),
+          where('groupId', '==', group.id)
+        ));
+        setChampPicks(champSnap.docs.map(d => d.data() as { uid: string; teamId: number; teamAbbr: string }));
       } catch (e: any) {
         console.error('[PlayoffPredictions] load error:', e);
         setError(e?.message?.includes('429')
@@ -450,6 +459,25 @@ function PlayoffPredictions({ group }: { group: Group }) {
   const actualSeriesTo7 = allSeries.filter(s => s.totalGames === 7).length;
   const actualOtGames = allGames.filter(g => g.isOT).length;
 
+  const saveChamp = async (teamId: number, teamAbbr: string) => {
+    if (!user) return;
+    setSavingChamp(true);
+    try {
+      const pick = { uid: user.uid, groupId: group.id, teamId, teamAbbr, season: String(currentNBASeason()), submittedAt: Date.now() };
+      const existing = await getDocs(query(collection(db, 'championship_picks'), where('uid', '==', user.uid), where('groupId', '==', group.id)));
+      if (!existing.empty) {
+        await updateDoc(doc(db, 'championship_picks', existing.docs[0].id), pick);
+      } else {
+        await addDoc(collection(db, 'championship_picks'), pick);
+      }
+      const snap = await getDocs(query(collection(db, 'championship_picks'), where('groupId', '==', group.id)));
+      setChampPicks(snap.docs.map(d => d.data() as { uid: string; teamId: number; teamAbbr: string }));
+      setShowChampModal(false);
+    } finally {
+      setSavingChamp(false);
+    }
+  };
+
   const saveBonus = async () => {
     if (!user) return;
     setSavingBonus(true);
@@ -484,6 +512,88 @@ function PlayoffPredictions({ group }: { group: Group }) {
 
   return (
     <ScrollView contentContainerStyle={{ paddingBottom: 40 }}>
+
+      {/* ── Championship Pick Section ── */}
+      {(() => {
+        const champion =allSeries.length > 0 && allSeries.every(s => s.isComplete)
+          ? allSeries.find(s => s.round === 'first_round' && false)?.winner // placeholder — real champ is last series winner
+          ?? (() => { const last = [...allSeries].sort((a,b) => (b.games.at(-1)?.date ?? '').localeCompare(a.games.at(-1)?.date ?? ''))[0]; return last?.winner; })()
+          : null;
+        const myChampPick = champPicks.find(p => p.uid === user?.uid);
+        return (
+          <View style={styles.bonusSection}>
+            <View style={styles.bonusHeader}>
+              <Text style={styles.bonusTitleText}>🏆 Pick the Champion</Text>
+              <Text style={styles.bonusSubText}>
+                {playoffsStarted ? 'Locked — playoffs in progress' : 'Locks when Round 1 tips off · 5 pts if correct'}
+              </Text>
+            </View>
+
+            {/* All members' picks */}
+            {champPicks.length > 0 && (
+              <View style={styles.bonusTable}>
+                {group.members.map(member => {
+                  const pick = champPicks.find(p => p.uid === member.uid);
+                  const correct = champion && pick && pick.teamId === champion.id;
+                  return (
+                    <View key={member.uid} style={styles.bonusTableRow}>
+                      <Text style={[styles.bonusCol, { flex: 2, color: '#d1d5db' }]}>{member.displayName}</Text>
+                      <Text style={[styles.bonusCol, { flex: 2, color: pick ? '#f97316' : '#4b5563' }]}>
+                        {pick ? pick.teamAbbr : '–'}
+                      </Text>
+                      {champion && (
+                        <Text style={[styles.bonusCol, { color: correct ? '#22c55e' : '#ef4444' }]}>
+                          {correct ? '+5 pts' : '+0 pts'}
+                        </Text>
+                      )}
+                    </View>
+                  );
+                })}
+              </View>
+            )}
+
+            {!playoffsStarted && (
+              <TouchableOpacity style={styles.bonusBtn} onPress={() => setShowChampModal(true)}>
+                <Text style={styles.bonusBtnText}>{myChampPick ? `My pick: ${myChampPick.teamAbbr} · Change` : 'Pick champion'}</Text>
+              </TouchableOpacity>
+            )}
+            {playoffsStarted && myChampPick && (
+              <Text style={[styles.bonusSubText, { paddingHorizontal: 16, paddingBottom: 12 }]}>
+                Your pick: <Text style={{ color: '#f97316', fontWeight: '700' }}>{myChampPick.teamAbbr}</Text>
+              </Text>
+            )}
+          </View>
+        );
+      })()}
+
+      {/* ── Championship Modal ── */}
+      <Modal visible={showChampModal} transparent animationType="slide">
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalBox}>
+            <Text style={styles.modalTitle}>🏆 Pick the Champion</Text>
+            <Text style={styles.modalSubtitle}>5 pts if correct · locks when Round 1 starts</Text>
+            <ScrollView style={{ maxHeight: 320 }} showsVerticalScrollIndicator={false}>
+              {[...new Map(allSeries.flatMap(s => [s.homeTeam, s.awayTeam]).map(t => [t.id, t])).values()]
+                .sort((a, b) => a.abbreviation.localeCompare(b.abbreviation))
+                .map(team => (
+                  <TouchableOpacity
+                    key={team.id}
+                    style={[styles.champTeamBtn, savingChamp && { opacity: 0.5 }]}
+                    onPress={() => saveChamp(team.id, team.abbreviation)}
+                    disabled={savingChamp}
+                  >
+                    <Text style={styles.champTeamAbbr}>{team.abbreviation}</Text>
+                    <Text style={styles.champTeamCity}>{team.city}</Text>
+                    <Text style={styles.champTeamArrow}>›</Text>
+                  </TouchableOpacity>
+                ))}
+            </ScrollView>
+            <TouchableOpacity style={[styles.modalBtn, { backgroundColor: '#1e2d3d', marginTop: 8 }]} onPress={() => setShowChampModal(false)}>
+              <Text style={{ color: '#9ca3af', fontWeight: '700' }}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
 
       {/* ── Bonus Picks Section ── */}
       <View style={styles.bonusSection}>
@@ -1246,4 +1356,8 @@ const styles = StyleSheet.create({
   modalTitle: { fontSize: 18, fontWeight: '800', color: '#fff', marginBottom: 4 },
   modalSubtitle: { fontSize: 12, color: '#6b7280', marginBottom: 4 },
   modalBtn: { paddingVertical: 12, borderRadius: 10, alignItems: 'center' },
+  champTeamBtn: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 4, borderBottomWidth: 1, borderBottomColor: '#1e2d3d' },
+  champTeamAbbr: { fontSize: 15, fontWeight: '800', color: '#f97316', width: 48 },
+  champTeamCity: { flex: 1, fontSize: 14, color: '#d1d5db' },
+  champTeamArrow: { fontSize: 20, color: '#4b5563' },
 });

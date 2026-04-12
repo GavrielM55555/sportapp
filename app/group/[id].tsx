@@ -8,10 +8,11 @@ import {
   TouchableOpacity,
   Share,
   Image,
+  Alert,
 } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import { useLocalSearchParams, Stack, useRouter } from 'expo-router';
-import { doc, onSnapshot } from 'firebase/firestore';
+import { doc, onSnapshot, collection, query, where, getDocs, writeBatch } from 'firebase/firestore';
 import { db } from '../../src/firebase/config';
 import { Group, GroupMember } from '../../src/types';
 import { useAuthContext } from '../../src/context/AuthContext';
@@ -57,7 +58,33 @@ export default function GroupScreen() {
     });
   };
 
+  const isAdmin = user?.uid === group.adminUid;
   const typeLabel = group.type === 'playoff' ? '🏆 NBA Playoffs' : group.type === 'football' ? '⚽ Football' : '🏀 NBA Season';
+
+  const deleteGroup = async () => {
+    const confirmed = typeof window !== 'undefined'
+      ? window.confirm(`Delete "${group.name}"? This will delete all predictions and cannot be undone.`)
+      : await new Promise<boolean>(resolve =>
+          Alert.alert('Delete Group', `Delete "${group.name}"? Cannot be undone.`, [
+            { text: 'Cancel', onPress: () => resolve(false), style: 'cancel' },
+            { text: 'Delete', onPress: () => resolve(true), style: 'destructive' },
+          ])
+        );
+    if (!confirmed) return;
+    try {
+      const batch = writeBatch(db);
+      const cols = ['predictions', 'series_predictions', 'football_predictions', 'playoff_bonus_picks', 'championship_picks'];
+      for (const col of cols) {
+        const snap = await getDocs(query(collection(db, col), where('groupId', '==', group.id)));
+        snap.docs.forEach(d => batch.delete(d.ref));
+      }
+      batch.delete(doc(db, 'groups', group.id));
+      await batch.commit();
+      router.replace('/(tabs)/groups');
+    } catch (e) {
+      alert('Failed to delete group.');
+    }
+  };
 
   return (
     <>
@@ -86,6 +113,11 @@ export default function GroupScreen() {
             <TouchableOpacity style={styles.shareBtn} onPress={shareGroup}>
               <Text style={styles.shareBtnText}>Share</Text>
             </TouchableOpacity>
+            {isAdmin && (
+              <TouchableOpacity style={styles.deleteBtn} onPress={deleteGroup}>
+                <Text style={styles.deleteBtnText}>🗑</Text>
+              </TouchableOpacity>
+            )}
           </View>
         </View>
 
@@ -188,4 +220,6 @@ const styles = StyleSheet.create({
   memberName: { flex: 1, fontSize: 15, fontWeight: '600', color: '#e5e7eb' },
   memberNameMe: { color: '#f97316' },
   points: { fontSize: 16, fontWeight: '800', color: '#fff' },
+  deleteBtn: { backgroundColor: '#1a0000', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, borderWidth: 1, borderColor: '#ef4444' },
+  deleteBtnText: { fontSize: 14 },
 });
