@@ -55,8 +55,20 @@ function mapGame(raw: any): Game {
   const isFinal = s === 'Final' || s === 'Final/OT';
   const status: Game['status'] = isFinal ? 'final' : isLive ? 'live' : 'scheduled';
 
-  // Use the status string as the game time when scheduled
-  const gameTime = !isFinal && !isLive && s.length > 0 ? s : raw.time ?? undefined;
+  // Parse game time — status may be an ISO timestamp for scheduled games
+  let gameTime: string | undefined;
+  if (!isFinal && !isLive) {
+    if (s.includes('T') && s.includes('Z')) {
+      // ISO timestamp → convert to local time string
+      try {
+        gameTime = new Date(s).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+      } catch { gameTime = s; }
+    } else if (s.length > 0) {
+      gameTime = s;
+    } else {
+      gameTime = raw.time ?? undefined;
+    }
+  }
 
   console.log(`[mapGame] id=${raw.id} status="${s}" → ${status}`);
 
