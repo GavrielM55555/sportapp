@@ -1,14 +1,20 @@
-import { View, Text, TouchableOpacity, StyleSheet, Image } from 'react-native';
+import { useEffect } from 'react';
+import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { router } from 'expo-router';
 import { useAuthContext } from '../src/context/AuthContext';
 
 export default function LoginScreen() {
-  const { signInWithGoogle } = useAuthContext();
+  const { user, signInWithGoogle } = useAuthContext();
+
+  // If user is already signed in (e.g. after redirect), go back
+  useEffect(() => {
+    if (user) router.replace('/(tabs)/groups');
+  }, [user]);
 
   const handleGoogleLogin = async () => {
     try {
       await signInWithGoogle();
-      router.back();
+      router.replace('/(tabs)/groups'); // for popup flow (mobile)
     } catch (e) {
       console.error('Login error', e);
     }

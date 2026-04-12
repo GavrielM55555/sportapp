@@ -39,7 +39,7 @@ const GROUP_TYPES: { type: GroupType; label: string; icon: string; desc: string 
 ];
 
 export default function GroupsScreen() {
-  const { user } = useAuthContext();
+  const { user, logout } = useAuthContext();
   const { groups, loading, createGroup, joinGroupByCode } = useGroups();
   const [showCreate, setShowCreate] = useState(false);
   const [showJoin, setShowJoin] = useState(false);
@@ -116,6 +116,9 @@ export default function GroupsScreen() {
         </TouchableOpacity>
         <TouchableOpacity style={[styles.actionBtn, styles.actionBtnSecondary]} onPress={() => setShowJoin(true)}>
           <Text style={[styles.actionBtnText, styles.actionBtnTextSecondary]}>Join with Code</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={[styles.actionBtn, styles.actionBtnSecondary]} onPress={logout}>
+          <Text style={[styles.actionBtnText, styles.actionBtnTextSecondary]}>Sign Out</Text>
         </TouchableOpacity>
       </View>
 
