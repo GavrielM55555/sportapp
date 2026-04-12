@@ -77,20 +77,51 @@ function mapGame(raw: any): Game {
   };
 }
 
+// ── Cache ─────────────────────────────────────────────────────────────────
+const gamesCache = new Map<string, { games: Game[]; ts: number }>();
+const CACHE_TTL = 5 * 60_000; // 5 minutes
+
+/** Convert a local date string to US Eastern Time date string (YYYY-MM-DD).
+ *  balldontlie stores games under their ET date, so we must query in ET. */
+function toETDateString(localDateStr: string): string {
+  // Use noon on the local date to avoid DST edge cases
+  const d = new Date(localDateStr + 'T12:00:00');
+  return d.toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+}
+
 // ── Public API ────────────────────────────────────────────────────────────
 
-/** Get games for one date or a range of dates — single API call */
+/** Get games for one date or a range of dates — single API call.
+ *  Dates are local (user's timezone); converted to ET for the query. */
 export async function getGamesByDates(dates: string[]): Promise<Game[]> {
   const sorted = [...dates].sort();
-  const start = sorted[0];
-  const end = sorted[sorted.length - 1];
+  // Convert to ET — also include the day before the earliest date to catch
+  // games that started the previous ET day but are "tonight" for users east of ET
+  const etDates = sorted.map(toETDateString);
+  const prevDay = new Date(sorted[0] + 'T12:00:00');
+  prevDay.setDate(prevDay.getDate() - 1);
+  const prevET = toETDateString(prevDay.toISOString().split('T')[0]);
+  const allET = [...new Set([prevET, ...etDates])].sort();
+  const start = allET[0];
+  const end = allET[allET.length - 1];
+
+  const cacheKey = `${start}::${end}`;
+  const cached = gamesCache.get(cacheKey);
+  if (cached && Date.now() - cached.ts < CACHE_TTL && cached.games.length > 0) {
+    return cached.games;
+  }
+
   const data = await get<{ data: any[] }>('/games', {
     start_date: start,
     end_date: end,
     per_page: 100,
   });
   console.log(`[API] ${start}→${end}: ${data.data.length} games`);
-  return data.data.map(mapGame);
+  const games = data.data.map(mapGame);
+  if (games.length > 0) {
+    gamesCache.set(cacheKey, { games, ts: Date.now() });
+  }
+  return games;
 }
 
 /** Get today's games */
