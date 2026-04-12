@@ -389,7 +389,7 @@ function PlayoffPredictions({ group }: { group: Group }) {
       if (!user) return; // wait for auth to resolve
       setError(null);
       try {
-        const games = await getPlayoffGames(currentNBASeason());
+        const games = await getPlayoffGames(2024); // TEMP: using 2024 season to test playoff UI
         setAllGames(games);
         // Filter out Play-In games (single-game matchups, not real series)
         const grouped = groupIntoSeries(games).filter(s => s.games.length >= 2);
