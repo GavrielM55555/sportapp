@@ -153,49 +153,70 @@ export async function getPlayoffGames(season?: number): Promise<Game[]> {
   return data.data.map(mapGame);
 }
 
-/** Group playoff games into series */
+/** Group playoff games into series.
+ *  Same two teams can meet in multiple rounds — split into separate series
+ *  whenever wins reset (i.e. a team reaches 4 wins, new series starts). */
 export function groupIntoSeries(games: Game[]): PlayoffSeries[] {
-  const seriesMap = new Map<string, Game[]>();
-
+  // First group all games by team pair
+  const pairMap = new Map<string, Game[]>();
   games.forEach((game) => {
     const key = [game.homeTeam.id, game.awayTeam.id].sort().join('-');
-    if (!seriesMap.has(key)) seriesMap.set(key, []);
-    seriesMap.get(key)!.push(game);
+    if (!pairMap.has(key)) pairMap.set(key, []);
+    pairMap.get(key)!.push(game);
   });
 
   const series: PlayoffSeries[] = [];
 
-  seriesMap.forEach((seriesGames) => {
-    const sorted = seriesGames.sort((a, b) => a.date.localeCompare(b.date));
-    const first = sorted[0];
-    const homeTeam = first.homeTeam;
-    const awayTeam = first.awayTeam;
+  pairMap.forEach((pairGames) => {
+    const sorted = pairGames.sort((a, b) => a.date.localeCompare(b.date));
 
-    let homeWins = 0;
-    let awayWins = 0;
+    // Split into individual series — a series ends when either team reaches 4 wins
+    let chunk: Game[] = [];
+    let hw = 0, aw = 0;
 
-    sorted.forEach((g) => {
-      if (g.status === 'final' && g.homeScore !== null && g.awayScore !== null) {
-        if (g.homeScore > g.awayScore) homeWins++;
-        else awayWins++;
+    const pushSeries = (chunkGames: Game[], roundIndex: number) => {
+      if (chunkGames.length === 0) return;
+      const first = chunkGames[0];
+      const homeTeam = first.homeTeam;
+      const awayTeam = first.awayTeam;
+      let homeWins = 0, awayWins = 0;
+      chunkGames.forEach(g => {
+        if (g.status === 'final' && g.homeScore !== null && g.awayScore !== null) {
+          if (g.homeScore > g.awayScore) homeWins++;
+          else awayWins++;
+        }
+      });
+      const isComplete = homeWins === 4 || awayWins === 4;
+      series.push({
+        id: `${[homeTeam.id, awayTeam.id].sort().join('-')}-r${roundIndex}`,
+        season: String(currentNBASeason()),
+        round: 'first_round',
+        homeTeam,
+        awayTeam,
+        homeWins,
+        awayWins,
+        isComplete,
+        winner: isComplete ? (homeWins === 4 ? homeTeam : awayTeam) : undefined,
+        totalGames: isComplete ? homeWins + awayWins : undefined,
+        games: chunkGames,
+      });
+    };
+
+    let roundIndex = 0;
+    for (const game of sorted) {
+      chunk.push(game);
+      if (game.status === 'final' && game.homeScore !== null && game.awayScore !== null) {
+        if (game.homeScore > game.awayScore) hw++;
+        else aw++;
       }
-    });
-
-    const isComplete = homeWins === 4 || awayWins === 4;
-
-    series.push({
-      id: [homeTeam.id, awayTeam.id].sort().join('-'),
-      season: String(currentNBASeason()),
-      round: 'first_round',
-      homeTeam,
-      awayTeam,
-      homeWins,
-      awayWins,
-      isComplete,
-      winner: isComplete ? (homeWins === 4 ? homeTeam : awayTeam) : undefined,
-      totalGames: isComplete ? homeWins + awayWins : undefined,
-      games: sorted,
-    });
+      // Series over — push and reset
+      if (hw === 4 || aw === 4) {
+        pushSeries(chunk, roundIndex++);
+        chunk = []; hw = 0; aw = 0;
+      }
+    }
+    // Push any remaining games (in-progress series)
+    if (chunk.length > 0) pushSeries(chunk, roundIndex);
   });
 
   return series;

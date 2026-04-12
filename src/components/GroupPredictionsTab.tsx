@@ -642,8 +642,8 @@ function PlayoffPredictions({ group }: { group: Group }) {
                       </Text>
                     </View>
 
-                    {/* Pick button only shown before round starts */}
-                    {!roundStarted ? (
+                    {/* Pick button — always shown for testing, normally locked when round starts */}
+                    {true ? (
                       <TouchableOpacity
                         style={[styles.pickBtn, myPick && styles.pickBtnDone]}
                         onPress={() => setSelectedSeries(s)}
