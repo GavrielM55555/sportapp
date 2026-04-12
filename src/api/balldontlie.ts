@@ -85,43 +85,61 @@ function mapGame(raw: any): Game {
   };
 }
 
-// ── Shared global cache — all tabs reuse the same fetched data ────────────
+// ── Shared global cache keyed by ET date range ────────────────────────────
 const CACHE_TTL = 5 * 60_000; // 5 minutes
-let windowCache: { games: Game[]; start: string; end: string; ts: number } | null = null;
+const rangeCache = new Map<string, { games: Game[]; ts: number }>();
 
 /** Returns ET date string for a JS Date */
 function toET(d: Date): string {
   return d.toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
 }
 
-/** Fetch a 3-day window (yesterday→tomorrow in ET) once and cache globally.
- *  All tabs filter from this shared result — only 1 API call per 5 minutes. */
-async function fetchWindow(): Promise<Game[]> {
-  const now = new Date();
-  const yesterday = new Date(now); yesterday.setDate(now.getDate() - 1);
-  const tomorrow = new Date(now); tomorrow.setDate(now.getDate() + 1);
-  const start = toET(yesterday);
-  const end = toET(tomorrow);
-
-  if (windowCache && windowCache.start === start && windowCache.end === end
-      && Date.now() - windowCache.ts < CACHE_TTL) {
-    return windowCache.games;
-  }
+/** Fetch games for a date range, cached by ET range key */
+async function fetchRange(start: string, end: string): Promise<Game[]> {
+  const key = `${start}::${end}`;
+  const cached = rangeCache.get(key);
+  if (cached && Date.now() - cached.ts < CACHE_TTL) return cached.games;
 
   const data = await get<{ data: any[] }>('/games', { start_date: start, end_date: end, per_page: 100 });
   const games = data.data.map(mapGame);
-  windowCache = { games, start, end, ts: Date.now() };
+  rangeCache.set(key, { games, ts: Date.now() });
   return games;
 }
 
 // ── Public API ────────────────────────────────────────────────────────────
 
-/** Get games for specific dates — filters from shared window cache.
- *  Falls back to a direct fetch if dates are outside the window. */
+// Pre-warm: fetch a wide window (7 days back, 14 days forward) once on first call
+// so all date navigation is served from cache with no extra calls
+let prewarmDone = false;
+async function prewarm() {
+  if (prewarmDone) return;
+  prewarmDone = true;
+  const now = new Date();
+  const start = toET(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 7));
+  const end = toET(new Date(now.getFullYear(), now.getMonth(), now.getDate() + 14));
+  await fetchRange(start, end);
+}
+
+/** Get games for specific dates.
+ *  Converts local dates to ET, fetches from cache (prewarmed on first call). */
 export async function getGamesByDates(dates: string[]): Promise<Game[]> {
-  const window = await fetchWindow();
-  // Filter games whose ET date matches any of the requested dates
-  return window.filter(g => dates.some(d => g.date === d || g.date.startsWith(d)));
+  await prewarm();
+  const sorted = [...dates].sort();
+  const etDates = sorted.map(d => toET(new Date(d + 'T12:00:00')));
+  const start = etDates[0];
+  const end = etDates[etDates.length - 1];
+  // If within prewarmed range, filter from it
+  const prewarmKey = (() => {
+    const now = new Date();
+    const s = toET(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 7));
+    const e = toET(new Date(now.getFullYear(), now.getMonth(), now.getDate() + 14));
+    return `${s}::${e}`;
+  })();
+  const cached = rangeCache.get(prewarmKey);
+  if (cached) {
+    return cached.games.filter(g => g.date >= start && g.date <= end);
+  }
+  return fetchRange(start, end);
 }
 
 /** Get today's games */
