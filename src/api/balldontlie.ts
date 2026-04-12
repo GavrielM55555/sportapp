@@ -24,12 +24,9 @@ async function get<T>(path: string, params: Record<string, string | number | str
   });
   const fullUrl = `${BASE_URL}${path}${parts.length ? '?' + parts.join('&') : ''}`;
 
-  console.log('[API]', fullUrl);
-
   const res = await fetch(fullUrl, { headers });
   if (!res.ok) {
     const text = await res.text();
-    console.error('[API error]', res.status, text);
     throw new Error(`balldontlie ${res.status}: ${text}`);
   }
   return res.json();
@@ -70,7 +67,6 @@ function mapGame(raw: any): Game {
     }
   }
 
-  console.log(`[mapGame] id=${raw.id} status="${s}" → ${status}`);
 
   return {
     id: raw.id,
@@ -89,51 +85,43 @@ function mapGame(raw: any): Game {
   };
 }
 
-// ── Cache ─────────────────────────────────────────────────────────────────
-const gamesCache = new Map<string, { games: Game[]; ts: number }>();
+// ── Shared global cache — all tabs reuse the same fetched data ────────────
 const CACHE_TTL = 5 * 60_000; // 5 minutes
+let windowCache: { games: Game[]; start: string; end: string; ts: number } | null = null;
 
-/** Convert a local date string to US Eastern Time date string (YYYY-MM-DD).
- *  balldontlie stores games under their ET date, so we must query in ET. */
-function toETDateString(localDateStr: string): string {
-  // Use noon on the local date to avoid DST edge cases
-  const d = new Date(localDateStr + 'T12:00:00');
+/** Returns ET date string for a JS Date */
+function toET(d: Date): string {
   return d.toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+}
+
+/** Fetch a 3-day window (yesterday→tomorrow in ET) once and cache globally.
+ *  All tabs filter from this shared result — only 1 API call per 5 minutes. */
+async function fetchWindow(): Promise<Game[]> {
+  const now = new Date();
+  const yesterday = new Date(now); yesterday.setDate(now.getDate() - 1);
+  const tomorrow = new Date(now); tomorrow.setDate(now.getDate() + 1);
+  const start = toET(yesterday);
+  const end = toET(tomorrow);
+
+  if (windowCache && windowCache.start === start && windowCache.end === end
+      && Date.now() - windowCache.ts < CACHE_TTL) {
+    return windowCache.games;
+  }
+
+  const data = await get<{ data: any[] }>('/games', { start_date: start, end_date: end, per_page: 100 });
+  const games = data.data.map(mapGame);
+  windowCache = { games, start, end, ts: Date.now() };
+  return games;
 }
 
 // ── Public API ────────────────────────────────────────────────────────────
 
-/** Get games for one date or a range of dates — single API call.
- *  Dates are local (user's timezone); converted to ET for the query. */
+/** Get games for specific dates — filters from shared window cache.
+ *  Falls back to a direct fetch if dates are outside the window. */
 export async function getGamesByDates(dates: string[]): Promise<Game[]> {
-  const sorted = [...dates].sort();
-  // Convert to ET — also include the day before the earliest date to catch
-  // games that started the previous ET day but are "tonight" for users east of ET
-  const etDates = sorted.map(toETDateString);
-  const prevDay = new Date(sorted[0] + 'T12:00:00');
-  prevDay.setDate(prevDay.getDate() - 1);
-  const prevET = toETDateString(prevDay.toISOString().split('T')[0]);
-  const allET = [...new Set([prevET, ...etDates])].sort();
-  const start = allET[0];
-  const end = allET[allET.length - 1];
-
-  const cacheKey = `${start}::${end}`;
-  const cached = gamesCache.get(cacheKey);
-  if (cached && Date.now() - cached.ts < CACHE_TTL && cached.games.length > 0) {
-    return cached.games;
-  }
-
-  const data = await get<{ data: any[] }>('/games', {
-    start_date: start,
-    end_date: end,
-    per_page: 100,
-  });
-  console.log(`[API] ${start}→${end}: ${data.data.length} games`);
-  const games = data.data.map(mapGame);
-  if (games.length > 0) {
-    gamesCache.set(cacheKey, { games, ts: Date.now() });
-  }
-  return games;
+  const window = await fetchWindow();
+  // Filter games whose ET date matches any of the requested dates
+  return window.filter(g => dates.some(d => g.date === d || g.date.startsWith(d)));
 }
 
 /** Get today's games */
