@@ -61,7 +61,6 @@ async function get<T>(path: string, params: Record<string, string | number> = {}
   const cached = cache.get(cacheKey);
   if (cached && Date.now() - cached.ts < CACHE_TTL) return cached.data as T;
 
-  console.log('[API-Football]', url);
   const res = await fetch(url, { headers });
   if (!res.ok) {
     const text = await res.text();

@@ -94,7 +94,6 @@ async function scoreFinishedGames(group: Group, finalGames: Game[], allPreds: Ga
   batch.update(doc(db, 'groups', group.id), { members: updatedMembers });
 
   await batch.commit();
-  console.log('[Scoring] Scored', unscoredPreds.length, 'predictions, updated', totalByUid.size, 'members');
 }
 
 // ── Season: today's games, predict before tip-off ────────────────────────
@@ -900,10 +899,11 @@ function FootballPredictions({ group }: { group: Group }) {
             const game = finalGames.find(g => g.id === pred.fixtureId)!;
             newScores.set(pred.id!, calcFootballPoints(pred, game));
           }
+          // Only accumulate points from newly scored predictions (delta), not all preds
           const totalByUid = new Map<string, number>();
-          for (const pred of preds) {
-            const pts = newScores.has(pred.id!) ? newScores.get(pred.id!)! : (pred.pointsEarned ?? 0);
-            totalByUid.set(pred.uid, (totalByUid.get(pred.uid) ?? 0) + pts);
+          for (const [predId, pts] of newScores) {
+            const pred = unscoredPreds.find(p => p.id === predId);
+            if (pred) totalByUid.set(pred.uid, (totalByUid.get(pred.uid) ?? 0) + pts);
           }
           for (const [predId, pts] of newScores) {
             batch.update(doc(db, 'football_predictions', predId), { pointsEarned: pts });

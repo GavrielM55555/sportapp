@@ -12,7 +12,7 @@ import {
 } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import { useLocalSearchParams, Stack, useRouter } from 'expo-router';
-import { doc, onSnapshot, collection, query, where, getDocs, writeBatch } from 'firebase/firestore';
+import { doc, onSnapshot, collection, query, where, getDocs, writeBatch, updateDoc } from 'firebase/firestore';
 import { db } from '../../src/firebase/config';
 import { Group, GroupMember } from '../../src/types';
 import { useAuthContext } from '../../src/context/AuthContext';
@@ -59,6 +59,31 @@ export default function GroupScreen() {
   };
 
   const isAdmin = user?.uid === group.adminUid;
+  const isMember = group.members.some(m => m.uid === user?.uid);
+
+  const leaveGroup = async () => {
+    const confirmed = typeof window !== 'undefined'
+      ? window.confirm(`Leave "${group.name}"? You can rejoin with the invite code.`)
+      : await new Promise<boolean>(resolve =>
+          Alert.alert('Leave Group', `Leave "${group.name}"?`, [
+            { text: 'Cancel', onPress: () => resolve(false), style: 'cancel' },
+            { text: 'Leave', onPress: () => resolve(true), style: 'destructive' },
+          ])
+        );
+    if (!confirmed) return;
+    try {
+      const updatedMembers = group.members.filter(m => m.uid !== user?.uid);
+      const update: any = { members: updatedMembers };
+      // If admin is leaving, transfer admin to the next member
+      if (isAdmin && updatedMembers.length > 0) {
+        update.adminUid = updatedMembers[0].uid;
+      }
+      await updateDoc(doc(db, 'groups', group.id), update);
+      router.replace('/(tabs)/groups');
+    } catch (e) {
+      alert('Failed to leave group.');
+    }
+  };
   const typeLabel = group.type === 'playoff' ? '🏆 NBA Playoffs' : group.type === 'football' ? '⚽ Football' : '🏀 NBA Season';
 
   const deleteGroup = async () => {
@@ -113,6 +138,11 @@ export default function GroupScreen() {
             <TouchableOpacity style={styles.shareBtn} onPress={shareGroup}>
               <Text style={styles.shareBtnText}>Share</Text>
             </TouchableOpacity>
+            {isMember && (
+              <TouchableOpacity style={styles.leaveBtn} onPress={leaveGroup}>
+                <Text style={styles.leaveBtnText}>Leave</Text>
+              </TouchableOpacity>
+            )}
             {isAdmin && (
               <TouchableOpacity style={styles.deleteBtn} onPress={deleteGroup}>
                 <Text style={styles.deleteBtnText}>🗑</Text>
@@ -220,6 +250,8 @@ const styles = StyleSheet.create({
   memberName: { flex: 1, fontSize: 15, fontWeight: '600', color: '#e5e7eb' },
   memberNameMe: { color: '#f97316' },
   points: { fontSize: 16, fontWeight: '800', color: '#fff' },
+  leaveBtn: { backgroundColor: '#0f1923', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, borderWidth: 1, borderColor: '#6b7280' },
+  leaveBtnText: { color: '#6b7280', fontWeight: '700', fontSize: 13 },
   deleteBtn: { backgroundColor: '#1a0000', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, borderWidth: 1, borderColor: '#ef4444' },
   deleteBtnText: { fontSize: 14 },
 });
