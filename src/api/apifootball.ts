@@ -185,8 +185,7 @@ export async function getMajorEvents(): Promise<LeagueEvent[]> {
 
 // ── Public API ────────────────────────────────────────────────────────────
 
-/** Get ALL fixtures for a date in one request, then filter by leagueIds client-side.
- *  This uses 1 API call per date regardless of how many leagues are selected. */
+/** Get ALL fixtures for a date in one request, then filter by leagueIds client-side. */
 export async function getFootballGamesByDate(
   date: string,
   leagueIds: number[]
