@@ -11,7 +11,7 @@ import {
 } from 'react-native';
 import { collection, query, where, getDocs, updateDoc, doc, writeBatch, addDoc } from 'firebase/firestore';
 import { db } from '../firebase/config';
-import { Game, GamePrediction, Group, PlayoffSeries, SeriesPrediction, FootballPrediction, FootballResult, PlayoffBonusPick } from '../types';
+import { Game, GamePrediction, Group, PlayoffSeries, SeriesPrediction, FootballPrediction, FootballResult } from '../types';
 import { getGamesByDates, getPlayoffGames, groupIntoSeries, currentNBASeason } from '../api/balldontlie';
 import { getFootballGamesByDate, SUPPORTED_LEAGUES, FootballGame } from '../api/apifootball';
 import { PredictGameModal } from './PredictGameModal';
@@ -252,6 +252,11 @@ function SeasonPredictions({ group }: { group: Group }) {
   return (
     <ScrollView contentContainerStyle={{ paddingBottom: 40 }}>
 
+      {/* ── Scoring info ── */}
+      <View style={styles.scoringInfo}>
+        <Text style={styles.scoringInfoText}>📊 Scoring: Correct winner = 2 pts · Exact score = +5 pts · Within ±10 = +2 pts</Text>
+      </View>
+
       {/* ── Live Now ── */}
       {liveGames.length > 0 && (
         <>
@@ -360,29 +365,32 @@ const ROUND_LABELS = ['Round 1', 'Round 2', 'Conference Finals', 'NBA Finals'];
 
 // ── Playoff: rounds with lock-all-on-tipoff logic ────────────────────────
 
-// ── Bonus scoring helper ──────────────────────────────────────────────────
-function calcBonusPoints(pick: PlayoffBonusPick, actual: { seriesTo7: number; otGames: number }): number {
-  let pts = 0;
-  if (pick.seriesTo7 !== undefined && pick.seriesTo7 === actual.seriesTo7) pts += 1;
-  if (pick.otGames !== undefined && pick.otGames === actual.otGames) pts += 1;
-  return pts;
+// ── Series scoring by round ───────────────────────────────────────────────
+// R1: 1pt winner, 3pts winner+games
+// R2: 1.5pt winner, 4.5pts winner+games
+// R3: 2.5pt winner, 6pts winner+games
+// Finals: 3.5pt winner, 9pts winner+games
+const ROUND_SCORING = [
+  { winner: 1,   exact: 3   },
+  { winner: 1.5, exact: 4.5 },
+  { winner: 2.5, exact: 6   },
+  { winner: 3.5, exact: 9   },
+];
+
+function calcSeriesPoints(roundIndex: number, correctWinner: boolean, correctGames: boolean): number {
+  if (!correctWinner) return 0;
+  const s = ROUND_SCORING[roundIndex] ?? ROUND_SCORING[0];
+  return correctGames ? s.exact : s.winner;
 }
 
 function PlayoffPredictions({ group }: { group: Group }) {
   const { user } = useAuthContext();
   const [allSeries, setAllSeries] = useState<PlayoffSeries[]>([]);
-  const [allGames, setAllGames] = useState<Game[]>([]);
   const [allPredictions, setAllPredictions] = useState<SeriesPrediction[]>([]);
-  const [bonusPicks, setBonusPicks] = useState<PlayoffBonusPick[]>([]);
   const [champPicks, setChampPicks] = useState<{ uid: string; teamId: number; teamAbbr: string }[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedSeries, setSelectedSeries] = useState<PlayoffSeries | null>(null);
-  // Bonus input state
-  const [showBonus, setShowBonus] = useState(false);
-  const [bonusSeriesTo7, setBonusSeriesTo7] = useState('');
-  const [bonusOtGames, setBonusOtGames] = useState('');
-  const [savingBonus, setSavingBonus] = useState(false);
   // Championship pick state
   const [showChampModal, setShowChampModal] = useState(false);
   const [savingChamp, setSavingChamp] = useState(false);
@@ -393,7 +401,6 @@ function PlayoffPredictions({ group }: { group: Group }) {
       setError(null);
       try {
         const games = await getPlayoffGames(currentNBASeason());
-        setAllGames(games);
         // Filter out Play-In games (single-game matchups, not real series)
         const grouped = groupIntoSeries(games).filter(s => s.games.length >= 2);
         setAllSeries(grouped);
@@ -403,18 +410,6 @@ function PlayoffPredictions({ group }: { group: Group }) {
           where('groupId', '==', group.id)
         ));
         setAllPredictions(snap.docs.map(d => ({ id: d.id, ...d.data() } as SeriesPrediction)));
-
-        const bonusSnap = await getDocs(query(
-          collection(db, 'playoff_bonus_picks'),
-          where('groupId', '==', group.id)
-        ));
-        const picks = bonusSnap.docs.map(d => ({ id: d.id, ...d.data() } as PlayoffBonusPick));
-        setBonusPicks(picks);
-        const myPick = picks.find(p => p.uid === user.uid);
-        if (myPick) {
-          if (myPick.seriesTo7 !== undefined) setBonusSeriesTo7(String(myPick.seriesTo7));
-          if (myPick.otGames !== undefined) setBonusOtGames(String(myPick.otGames));
-        }
 
         const champSnap = await getDocs(query(
           collection(db, 'championship_picks'),
@@ -450,13 +445,7 @@ function PlayoffPredictions({ group }: { group: Group }) {
 
   const rounds = detectRounds(allSeries);
   const myPredictions = allPredictions.filter(p => p.uid === user?.uid);
-  const myBonusPick = bonusPicks.find(p => p.uid === user?.uid);
   const playoffsStarted = allSeries.some(s => s.games.some(g => g.status !== 'scheduled'));
-  const playoffsComplete = allSeries.length > 0 && allSeries.every(s => s.isComplete);
-
-  // Actual counts for scoring
-  const actualSeriesTo7 = allSeries.filter(s => s.totalGames === 7).length;
-  const actualOtGames = allGames.filter(g => g.isOT).length;
 
   const saveChamp = async (teamId: number, teamAbbr: string) => {
     if (!user) return;
@@ -477,40 +466,14 @@ function PlayoffPredictions({ group }: { group: Group }) {
     }
   };
 
-  const saveBonus = async () => {
-    if (!user) return;
-    setSavingBonus(true);
-    try {
-      const pick: any = {
-        uid: user.uid,
-        groupId: group.id,
-        season: String(currentNBASeason()),
-        submittedAt: Date.now(),
-      };
-      if (bonusSeriesTo7 !== '') pick.seriesTo7 = parseInt(bonusSeriesTo7);
-      if (bonusOtGames !== '') pick.otGames = parseInt(bonusOtGames);
-
-      const existing = await getDocs(query(
-        collection(db, 'playoff_bonus_picks'),
-        where('uid', '==', user.uid),
-        where('groupId', '==', group.id)
-      ));
-      if (!existing.empty) {
-        await updateDoc(doc(db, 'playoff_bonus_picks', existing.docs[0].id), pick);
-      } else {
-        await addDoc(collection(db, 'playoff_bonus_picks'), pick);
-      }
-      setShowBonus(false);
-      // Reload bonus picks
-      const snap = await getDocs(query(collection(db, 'playoff_bonus_picks'), where('groupId', '==', group.id)));
-      setBonusPicks(snap.docs.map(d => ({ id: d.id, ...d.data() } as PlayoffBonusPick)));
-    } finally {
-      setSavingBonus(false);
-    }
-  };
 
   return (
     <ScrollView contentContainerStyle={{ paddingBottom: 40 }}>
+
+      {/* ── Scoring info ── */}
+      <View style={styles.scoringInfo}>
+        <Text style={styles.scoringInfoText}>📊 Scoring: Correct winner = 1 pt · Correct winner + games = 3 pts (R1) · Increases each round · Champion pick = 5 pts</Text>
+      </View>
 
       {/* ── Championship Pick Section ── */}
       {(() => {
@@ -594,98 +557,6 @@ function PlayoffPredictions({ group }: { group: Group }) {
         </View>
       </Modal>
 
-      {/* ── Bonus Picks Section ── */}
-      <View style={styles.bonusSection}>
-        <View style={styles.bonusHeader}>
-          <Text style={styles.bonusTitleText}>🎯 Bonus Predictions</Text>
-          <Text style={styles.bonusSubText}>
-            {playoffsStarted ? 'Locked — playoffs in progress' : 'Optional · locks when Round 1 tips off'}
-          </Text>
-        </View>
-
-        {/* Leaderboard of bonus picks */}
-        {bonusPicks.length > 0 && (
-          <View style={styles.bonusTable}>
-            <View style={styles.bonusTableHeader}>
-              <Text style={[styles.bonusCol, { flex: 2 }]}>Player</Text>
-              <Text style={styles.bonusCol}>7-game series</Text>
-              <Text style={styles.bonusCol}>OT games</Text>
-              {playoffsComplete && <Text style={styles.bonusCol}>Pts</Text>}
-            </View>
-            {group.members.map(member => {
-              const pick = bonusPicks.find(p => p.uid === member.uid);
-              const pts = pick && playoffsComplete ? calcBonusPoints(pick, { seriesTo7: actualSeriesTo7, otGames: actualOtGames }) : undefined;
-              return (
-                <View key={member.uid} style={styles.bonusTableRow}>
-                  <Text style={[styles.bonusCol, { flex: 2, color: '#d1d5db' }]}>{member.displayName}</Text>
-                  <Text style={styles.bonusCol}>{pick?.seriesTo7 ?? '–'}</Text>
-                  <Text style={styles.bonusCol}>{pick?.otGames ?? '–'}</Text>
-                  {playoffsComplete && <Text style={[styles.bonusCol, { color: '#f97316' }]}>{pts !== undefined ? `+${pts}` : '–'}</Text>}
-                </View>
-              );
-            })}
-            {playoffsComplete && (
-              <View style={styles.bonusActualRow}>
-                <Text style={[styles.bonusCol, { flex: 2, color: '#6b7280' }]}>Actual</Text>
-                <Text style={[styles.bonusCol, { color: '#22c55e' }]}>{actualSeriesTo7}</Text>
-                <Text style={[styles.bonusCol, { color: '#22c55e' }]}>{actualOtGames}</Text>
-                <Text style={styles.bonusCol} />
-              </View>
-            )}
-          </View>
-        )}
-
-        {!playoffsStarted && (
-          <TouchableOpacity style={styles.bonusBtn} onPress={() => setShowBonus(true)}>
-            <Text style={styles.bonusBtnText}>{myBonusPick ? 'Edit my bonus picks' : 'Submit bonus picks'}</Text>
-          </TouchableOpacity>
-        )}
-      </View>
-
-      {/* ── Bonus Modal ── */}
-      <Modal visible={showBonus} transparent animationType="slide">
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalBox}>
-            <Text style={styles.modalTitle}>🎯 Bonus Predictions</Text>
-            <Text style={styles.modalSubtitle}>Scored after all playoffs finish · 1 pt per exact answer</Text>
-
-            <Text style={styles.bonusQuestion}>How many series will go to 7 games?</Text>
-            <TextInput
-              style={styles.bonusInput}
-              keyboardType="number-pad"
-              placeholder="Your guess (0–15)"
-              placeholderTextColor="#4b5563"
-              value={bonusSeriesTo7}
-              onChangeText={setBonusSeriesTo7}
-              maxLength={2}
-            />
-
-            <Text style={styles.bonusQuestion}>How many games will go to overtime?</Text>
-            <TextInput
-              style={styles.bonusInput}
-              keyboardType="number-pad"
-              placeholder="Your guess (0–50)"
-              placeholderTextColor="#4b5563"
-              value={bonusOtGames}
-              onChangeText={setBonusOtGames}
-              maxLength={2}
-            />
-
-            <View style={{ flexDirection: 'row', gap: 10, marginTop: 8 }}>
-              <TouchableOpacity style={[styles.modalBtn, { backgroundColor: '#1e2d3d', flex: 1 }]} onPress={() => setShowBonus(false)}>
-                <Text style={{ color: '#9ca3af', fontWeight: '700' }}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.modalBtn, { backgroundColor: '#f97316', flex: 1, opacity: savingBonus ? 0.6 : 1 }]}
-                onPress={saveBonus}
-                disabled={savingBonus}
-              >
-                <Text style={{ color: '#fff', fontWeight: '700' }}>{savingBonus ? 'Saving…' : 'Save'}</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
 
       {rounds.map((roundSeries, roundIndex) => {
         const label = ROUND_LABELS[roundIndex] ?? `Round ${roundIndex + 1}`;
@@ -787,7 +658,7 @@ function PlayoffPredictions({ group }: { group: Group }) {
                           ? s.homeTeam.abbreviation : s.awayTeam.abbreviation;
                         const correct = s.isComplete && s.winner?.id === pick.predictedWinnerTeamId;
                         const lengthCorrect = s.isComplete && s.totalGames === pick.predictedGames;
-                        const pts = s.isComplete ? (correct ? 5 : 0) + (lengthCorrect ? 3 : 0) : undefined;
+                        const pts = s.isComplete ? calcSeriesPoints(roundIndex, correct, lengthCorrect) : undefined;
                         return (
                           <View key={member.uid} style={styles.revealRow}>
                             <Text style={styles.revealName}>{member.displayName}</Text>
@@ -1034,6 +905,12 @@ function FootballPredictions({ group }: { group: Group }) {
 
   return (
     <ScrollView contentContainerStyle={{ paddingBottom: 40 }}>
+
+      {/* ── Scoring info ── */}
+      <View style={styles.scoringInfo}>
+        <Text style={styles.scoringInfoText}>📊 Scoring: Correct result = 2 pts · Exact score = +5 pts</Text>
+      </View>
+
       {leagueGroups.map(({ league, upcoming, live, final: finished }) => (
         <View key={league.id}>
           {/* League header */}
@@ -1362,4 +1239,6 @@ const styles = StyleSheet.create({
   champTeamAbbr: { fontSize: 15, fontWeight: '800', color: '#f97316', width: 48 },
   champTeamCity: { flex: 1, fontSize: 14, color: '#d1d5db' },
   champTeamArrow: { fontSize: 20, color: '#4b5563' },
+  scoringInfo: { marginHorizontal: 12, marginBottom: 8, marginTop: 4, backgroundColor: '#1a2634', borderRadius: 10, paddingVertical: 8, paddingHorizontal: 12, borderWidth: 1, borderColor: '#1e2d3d' },
+  scoringInfoText: { color: '#6b7280', fontSize: 11, textAlign: 'center', lineHeight: 16 },
 });
