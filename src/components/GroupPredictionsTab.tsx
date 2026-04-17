@@ -409,7 +409,42 @@ function PlayoffPredictions({ group }: { group: Group }) {
           collection(db, 'series_predictions'),
           where('groupId', '==', group.id)
         ));
-        setAllPredictions(snap.docs.map(d => ({ id: d.id, ...d.data() } as SeriesPrediction)));
+        const preds = snap.docs.map(d => ({ id: d.id, ...d.data() } as SeriesPrediction));
+
+        // Auto-score completed series that haven't been scored yet
+        const rounds = detectRounds(grouped);
+        const unscoredPreds = preds.filter(p => p.pointsEarned === undefined && grouped.some(s => s.id === p.seriesId && s.isComplete));
+        if (unscoredPreds.length > 0) {
+          const batch = writeBatch(db);
+          const newScores = new Map<string, number>();
+          for (const pred of unscoredPreds) {
+            const series = grouped.find(s => s.id === pred.seriesId)!;
+            const roundIndex = rounds.findIndex(r => r.some(s => s.id === series.id));
+            const correctWinner = series.winner?.id === pred.predictedWinnerTeamId;
+            const correctGames = series.totalGames === pred.predictedGames;
+            newScores.set(pred.id!, calcSeriesPoints(roundIndex, correctWinner, correctGames));
+          }
+          // Accumulate only the new points (delta)
+          const totalByUid = new Map<string, number>();
+          for (const [predId, pts] of newScores) {
+            const pred = unscoredPreds.find(p => p.id === predId);
+            if (pred) totalByUid.set(pred.uid, (totalByUid.get(pred.uid) ?? 0) + pts);
+          }
+          for (const [predId, pts] of newScores) {
+            batch.update(doc(db, 'series_predictions', predId), { pointsEarned: pts });
+          }
+          const updatedMembers = group.members.map(m => ({
+            ...m,
+            totalPoints: (m.totalPoints ?? 0) + (totalByUid.get(m.uid) ?? 0),
+          }));
+          batch.update(doc(db, 'groups', group.id), { members: updatedMembers });
+          await batch.commit();
+
+          const rescored = await getDocs(query(collection(db, 'series_predictions'), where('groupId', '==', group.id)));
+          setAllPredictions(rescored.docs.map(d => ({ id: d.id, ...d.data() } as SeriesPrediction)));
+        } else {
+          setAllPredictions(preds);
+        }
 
         const champSnap = await getDocs(query(
           collection(db, 'championship_picks'),
