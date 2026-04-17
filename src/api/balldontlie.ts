@@ -87,7 +87,7 @@ function mapGame(raw: any): Game {
 
 // ── Shared global cache keyed by ET date range ────────────────────────────
 const CACHE_TTL = 5 * 60_000; // 5 minutes
-const rangeCache = new Map<string, { games: Game[]; ts: number }>();
+export const rangeCache = new Map<string, { games: Game[]; ts: number }>();
 
 /** Returns ET date string for a JS Date */
 function toET(d: Date): string {
@@ -121,13 +121,34 @@ async function prewarm() {
 }
 
 /** Get games for specific dates.
- *  Converts local dates to ET, fetches from cache (prewarmed on first call). */
-export async function getGamesByDates(dates: string[]): Promise<Game[]> {
+ *  Converts local dates to ET, fetches from cache (prewarmed on first call).
+ *  Pass forceRefresh=true to bypass cache and fetch fresh (used for live score updates). */
+export async function getGamesByDates(dates: string[], forceRefresh = false): Promise<Game[]> {
   await prewarm();
   const sorted = [...dates].sort();
   const etDates = sorted.map(d => toET(new Date(d + 'T12:00:00')));
   const start = etDates[0];
   const end = etDates[etDates.length - 1];
+
+  if (forceRefresh) {
+    // Fetch just this date range directly (1 API call), then patch the prewarm cache
+    const data = await get<{ data: any[] }>('/games', { start_date: start, end_date: end, per_page: 100 });
+    const freshGames = data.data.map(mapGame);
+    const prewarmKey = (() => {
+      const now = new Date();
+      const s = toET(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 7));
+      const e = toET(new Date(now.getFullYear(), now.getMonth(), now.getDate() + 14));
+      return `${s}::${e}`;
+    })();
+    const cached = rangeCache.get(prewarmKey);
+    if (cached) {
+      // Replace today's games in the cached range with fresh data
+      const merged = cached.games.filter(g => g.date < start || g.date > end).concat(freshGames);
+      rangeCache.set(prewarmKey, { games: merged, ts: cached.ts });
+    }
+    return freshGames;
+  }
+
   // If within prewarmed range, filter from it
   const prewarmKey = (() => {
     const now = new Date();
@@ -161,8 +182,15 @@ export async function getUpcomingGames(): Promise<Game[]> {
 }
 
 /** Get playoff games for a season — paginates to get all games */
+export const playoffCache = new Map<number, { games: Game[]; ts: number }>();
+const PLAYOFF_CACHE_TTL = 5 * 60_000; // 5 minutes
+
 export async function getPlayoffGames(season?: number): Promise<Game[]> {
   const s = season ?? currentNBASeason();
+
+  const cached = playoffCache.get(s);
+  if (cached && Date.now() - cached.ts < PLAYOFF_CACHE_TTL) return cached.games;
+
   const allGames: Game[] = [];
   let cursor: number | undefined;
 
@@ -182,6 +210,7 @@ export async function getPlayoffGames(season?: number): Promise<Game[]> {
     cursor = nextCursor;
   }
 
+  playoffCache.set(s, { games: allGames, ts: Date.now() });
   return allGames;
 }
 

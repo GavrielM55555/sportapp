@@ -13,16 +13,24 @@ import { db } from '../firebase/config';
 import { useAuthContext } from '../context/AuthContext';
 import { PlayoffSeries, SeriesPrediction } from '../types';
 
+const ROUND_SCORING = [
+  { winner: 1,   exact: 3   },
+  { winner: 1.5, exact: 4.5 },
+  { winner: 2.5, exact: 6   },
+  { winner: 3.5, exact: 9   },
+];
+
 interface Props {
   series: PlayoffSeries;
   groupId?: string;
+  roundIndex?: number;
   onClose: () => void;
   onSaved?: () => void;
 }
 
 const GAME_OPTIONS = [4, 5, 6, 7] as const;
 
-export function PredictSeriesModal({ series, groupId, onClose, onSaved }: Props) {
+export function PredictSeriesModal({ series, groupId, roundIndex = 0, onClose, onSaved }: Props) {
   const { user } = useAuthContext();
   const [selectedTeamId, setSelectedTeamId] = useState<number | null>(null);
   const [selectedGames, setSelectedGames] = useState<4 | 5 | 6 | 7 | null>(null);
@@ -129,8 +137,8 @@ export function PredictSeriesModal({ series, groupId, onClose, onSaved }: Props)
             {/* Points guide */}
             <View style={styles.pointsGuide}>
               <Text style={styles.pointsTitle}>Points you can earn:</Text>
-              <Text style={styles.pointsRow}>✓ Correct series winner → 5 pts</Text>
-              <Text style={styles.pointsRow}>✓ Correct number of games → +3 pts</Text>
+              <Text style={styles.pointsRow}>✓ Correct series winner → {ROUND_SCORING[roundIndex].winner} pts</Text>
+              <Text style={styles.pointsRow}>✓ Correct winner + games → {ROUND_SCORING[roundIndex].exact} pts</Text>
             </View>
 
             <TouchableOpacity

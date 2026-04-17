@@ -245,7 +245,7 @@ export default function ScoresScreen() {
     const gen = ++nbaRequestGen.current;
     if (!isRefresh) { setNbaGames([]); setNbaLoading(true); }
     try {
-      const data = await getGamesByDates([date]);
+      const data = await getGamesByDates([date], isRefresh);
       if (gen !== nbaRequestGen.current) return;
       setNbaGames(data);
     } catch (e) {

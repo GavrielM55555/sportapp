@@ -118,7 +118,7 @@ export default function GroupScreen() {
         options={{
           title: group.name,
           headerLeft: () => (
-            <TouchableOpacity onPress={() => router.back()} style={{ marginRight: 12 }}>
+            <TouchableOpacity onPress={() => { if (router.canGoBack()) { router.back(); } else { router.replace('/(tabs)/groups'); } }} style={{ marginRight: 12 }}>
               <Text style={{ color: '#f97316', fontSize: 16, fontWeight: '700' }}>← Back</Text>
             </TouchableOpacity>
           ),

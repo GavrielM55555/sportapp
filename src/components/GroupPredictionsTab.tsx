@@ -12,7 +12,7 @@ import {
 import { collection, query, where, getDocs, updateDoc, doc, writeBatch, addDoc } from 'firebase/firestore';
 import { db } from '../firebase/config';
 import { Game, GamePrediction, Group, PlayoffSeries, SeriesPrediction, FootballPrediction, FootballResult } from '../types';
-import { getGamesByDates, getPlayoffGames, groupIntoSeries, currentNBASeason } from '../api/balldontlie';
+import { getGamesByDates, getPlayoffGames, groupIntoSeries, currentNBASeason, playoffCache } from '../api/balldontlie';
 import { getFootballGamesByDate, SUPPORTED_LEAGUES, FootballGame } from '../api/apifootball';
 import { PredictGameModal } from './PredictGameModal';
 import { PredictSeriesModal } from './PredictSeriesModal';
@@ -363,6 +363,20 @@ function detectRounds(allSeries: PlayoffSeries[]): PlayoffSeries[][] {
 
 const ROUND_LABELS = ['Round 1', 'Round 2', 'Conference Finals', 'NBA Finals'];
 
+// Champion pick points by team abbreviation (based on 2026 playoff seeding)
+const CHAMP_POINTS: Record<string, number> = {
+  'OKC': 1,
+  'SAS': 2, 'BOS': 2,
+  'DET': 3, 'DEN': 3,
+  'CLE': 4, 'NYK': 4,
+  'HOU': 5, 'MIN': 5,
+  'LAL': 6, 'ATL': 6,
+  'PHI': 7,
+  'TOR': 8,
+  'POR': 9,
+  'PHX': 10, 'ORL': 10,
+};
+
 // ── Playoff: rounds with lock-all-on-tipoff logic ────────────────────────
 
 // ── Series scoring by round ───────────────────────────────────────────────
@@ -394,6 +408,17 @@ function PlayoffPredictions({ group }: { group: Group }) {
   // Championship pick state
   const [showChampModal, setShowChampModal] = useState(false);
   const [savingChamp, setSavingChamp] = useState(false);
+
+  const silentReload = React.useCallback(async () => {
+    if (!user) return;
+    try {
+      const games = await getPlayoffGames(currentNBASeason());
+      const grouped = groupIntoSeries(games).filter(s => s.games.length >= 2);
+      setAllSeries(grouped);
+    } catch (e) {
+      // silent — don't show error on background refresh
+    }
+  }, [user, group.id]);
 
   useEffect(() => {
     async function load() {
@@ -463,6 +488,17 @@ function PlayoffPredictions({ group }: { group: Group }) {
     load();
   }, [group.id, user?.uid]);
 
+  // Auto-refresh every 5 min silently, but only before playoffs start (to catch tip-off and lock picks)
+  useEffect(() => {
+    const playoffsStarted = allSeries.some(s => s.games.some(g => g.status !== 'scheduled'));
+    if (playoffsStarted || allSeries.length === 0) return;
+    const interval = setInterval(() => {
+      playoffCache.clear();
+      silentReload();
+    }, 5 * 60_000);
+    return () => clearInterval(interval);
+  }, [allSeries, silentReload]);
+
   if (loading) return <ActivityIndicator color="#f97316" style={styles.loader} />;
 
   if (error) {
@@ -514,7 +550,7 @@ function PlayoffPredictions({ group }: { group: Group }) {
       </View>
 
       {/* ── Championship Pick Section ── */}
-      {false && (() => {
+      {(() => {
         const champion =allSeries.length > 0 && allSeries.every(s => s.isComplete)
           ? allSeries.find(s => s.round === 'first_round' && false)?.winner // placeholder — real champ is last series winner
           ?? (() => { const last = [...allSeries].sort((a,b) => (b.games.at(-1)?.date ?? '').localeCompare(a.games.at(-1)?.date ?? ''))[0]; return last?.winner; })()
@@ -525,12 +561,12 @@ function PlayoffPredictions({ group }: { group: Group }) {
             <View style={styles.bonusHeader}>
               <Text style={styles.bonusTitleText}>🏆 Pick the Champion</Text>
               <Text style={styles.bonusSubText}>
-                {playoffsStarted ? 'Locked — playoffs in progress' : 'Locks when Round 1 tips off · 5 pts if correct'}
+                {playoffsStarted ? 'Locked — playoffs in progress' : 'Locks when Round 1 tips off'}
               </Text>
             </View>
 
             {/* All members' picks */}
-            {champPicks.length > 0 && (
+            {playoffsStarted && champPicks.length > 0 && (
               <View style={styles.bonusTable}>
                 {group.members.map(member => {
                   const pick = champPicks.find(p => p.uid === member.uid);
@@ -543,7 +579,7 @@ function PlayoffPredictions({ group }: { group: Group }) {
                       </Text>
                       {champion && (
                         <Text style={[styles.bonusCol, { color: correct ? '#22c55e' : '#ef4444' }]}>
-                          {correct ? '+5 pts' : '+0 pts'}
+                          {correct ? `+${CHAMP_POINTS[pick!.teamAbbr] ?? 5} pts` : '+0 pts'}
                         </Text>
                       )}
                     </View>
@@ -571,7 +607,7 @@ function PlayoffPredictions({ group }: { group: Group }) {
         <View style={styles.modalOverlay}>
           <View style={styles.modalBox}>
             <Text style={styles.modalTitle}>🏆 Pick the Champion</Text>
-            <Text style={styles.modalSubtitle}>5 pts if correct · locks when Round 1 starts</Text>
+            <Text style={styles.modalSubtitle}>Locks when Round 1 starts</Text>
             <ScrollView style={{ maxHeight: 320 }} showsVerticalScrollIndicator={false}>
               {[...new Map(allSeries.flatMap(s => [s.homeTeam, s.awayTeam]).map(t => [t.id, t])).values()]
                 .sort((a, b) => a.abbreviation.localeCompare(b.abbreviation))
@@ -728,6 +764,7 @@ function PlayoffPredictions({ group }: { group: Group }) {
         <PredictSeriesModal
           series={selectedSeries}
           groupId={group.id}
+          roundIndex={rounds.findIndex(r => r.some(s => s.id === selectedSeries.id))}
           onClose={() => setSelectedSeries(null)}
           onSaved={async () => {
             setSelectedSeries(null);
