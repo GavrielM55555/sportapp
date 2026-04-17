@@ -472,11 +472,14 @@ function PlayoffPredictions({ group }: { group: Group }) {
 
       {/* ── Scoring info ── */}
       <View style={styles.scoringInfo}>
-        <Text style={styles.scoringInfoText}>📊 Scoring: Correct winner = 1 pt · Correct winner + games = 3 pts (R1) · Increases each round · Champion pick = 5 pts</Text>
+        <Text style={styles.scoringInfoText}>📊 Round 1: Winner = 1 pt · Winner + games = 3 pts</Text>
+        <Text style={styles.scoringInfoText}>📊 Round 2: Winner = 1.5 pts · Winner + games = 4.5 pts</Text>
+        <Text style={styles.scoringInfoText}>📊 Conf Finals: Winner = 2.5 pts · Winner + games = 6 pts</Text>
+        <Text style={styles.scoringInfoText}>📊 Finals: Winner = 3.5 pts · Winner + games = 9 pts</Text>
       </View>
 
       {/* ── Championship Pick Section ── */}
-      {(() => {
+      {false && (() => {
         const champion =allSeries.length > 0 && allSeries.every(s => s.isComplete)
           ? allSeries.find(s => s.round === 'first_round' && false)?.winner // placeholder — real champ is last series winner
           ?? (() => { const last = [...allSeries].sort((a,b) => (b.games.at(-1)?.date ?? '').localeCompare(a.games.at(-1)?.date ?? ''))[0]; return last?.winner; })()
