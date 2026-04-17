@@ -11,6 +11,7 @@ import {
   Alert,
 } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
+import { Linking } from 'react-native';
 import { useLocalSearchParams, Stack, useRouter } from 'expo-router';
 import { doc, onSnapshot, collection, query, where, getDocs, writeBatch, updateDoc } from 'firebase/firestore';
 import { db } from '../../src/firebase/config';
@@ -151,6 +152,16 @@ export default function GroupScreen() {
           </View>
         </View>
 
+        {/* Injury Report — NBA Playoffs only */}
+        {group.type === 'playoff' && (
+          <TouchableOpacity
+            style={styles.injuryBtn}
+            onPress={() => Linking.openURL('https://docs.google.com/document/d/1u1pWZsj6vRYBvZjMoyMlDHdzmwJ1uTv3XZXVaEsp-tE/edit?tab=t.0')}
+          >
+            <Text style={styles.injuryBtnText}>🚑 Injury Report</Text>
+          </TouchableOpacity>
+        )}
+
         {/* Tabs */}
         <View style={styles.tabs}>
           <TouchableOpacity
@@ -252,6 +263,8 @@ const styles = StyleSheet.create({
   points: { fontSize: 16, fontWeight: '800', color: '#fff' },
   leaveBtn: { backgroundColor: '#0f1923', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, borderWidth: 1, borderColor: '#6b7280' },
   leaveBtnText: { color: '#6b7280', fontWeight: '700', fontSize: 13 },
+  injuryBtn: { marginHorizontal: 12, marginBottom: 8, backgroundColor: '#1a2634', borderRadius: 10, paddingVertical: 10, alignItems: 'center', borderWidth: 1, borderColor: '#374151' },
+  injuryBtnText: { color: '#9ca3af', fontWeight: '700', fontSize: 13 },
   deleteBtn: { backgroundColor: '#1a0000', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, borderWidth: 1, borderColor: '#ef4444' },
   deleteBtnText: { fontSize: 14 },
 });
