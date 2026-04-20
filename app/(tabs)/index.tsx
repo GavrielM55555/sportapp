@@ -18,13 +18,20 @@ import { GameCard } from '../../src/components/GameCard';
 type Sport = 'nba' | 'football';
 
 // ── Date strip ────────────────────────────────────────────────────────────
+function localIso(d: Date) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
 function buildDateList() {
   const dates = [];
   const now = new Date();
   for (let i = -7; i <= 14; i++) {
     const d = new Date(now);
     d.setDate(now.getDate() + i);
-    const iso = d.toISOString().split('T')[0];
+    const iso = localIso(d);
     const isToday = i === 0;
     const dayLabel = isToday ? 'Today' : d.toLocaleDateString('en-US', { weekday: 'short' });
     const label = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
@@ -209,7 +216,7 @@ function getFootballDays() {
   for (let i = -7; i <= 14; i++) {
     const d = new Date(now);
     d.setDate(now.getDate() + i);
-    const iso = d.toISOString().split('T')[0];
+    const iso = localIso(d);
     const isToday = i === 0;
     const dayLabel = isToday ? 'Today' : d.toLocaleDateString('en-US', { weekday: 'short' });
     const label = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
