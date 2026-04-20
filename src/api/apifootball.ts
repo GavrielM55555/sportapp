@@ -1,14 +1,26 @@
-const BASE_URL = 'https://www.thesportsdb.com/api/v1/json/123';
+const SCOREBOARD_URL = 'https://site.api.espn.com/apis/site/v2/sports/soccer';
+const STANDINGS_URL = 'https://site.api.espn.com/apis/v2/sports/soccer';
 
-// ── Leagues we support (TheSportsDB IDs) ─────────────────────────────────
+// ── ESPN league slugs ─────────────────────────────────────────────────────
+const LEAGUE_SLUG: Record<number, string> = {
+  4328: 'eng.1',         // Premier League
+  4335: 'esp.1',         // La Liga
+  4331: 'ger.1',         // Bundesliga
+  4332: 'ita.1',         // Serie A
+  4334: 'fra.1',         // Ligue 1
+  4480: 'uefa.champions', // Champions League
+  4399: 'fifa.world',    // World Cup
+};
+
+// ── Leagues we support ────────────────────────────────────────────────────
 export const SUPPORTED_LEAGUES: FootballLeague[] = [
-  { id: 4328, name: 'Premier League',    country: 'England',  logo: '🏴󠁧󠁢󠁥󠁮󠁧󠁿' },
-  { id: 4335, name: 'La Liga',           country: 'Spain',    logo: '🇪🇸' },
-  { id: 4331, name: 'German Bundesliga', country: 'Germany',  logo: '🇩🇪' },
-  { id: 4332, name: 'Italian Serie A',   country: 'Italy',    logo: '🇮🇹' },
-  { id: 4334, name: 'French Ligue 1',    country: 'France',   logo: '🇫🇷' },
-  { id: 4480, name: 'Champions League',  country: 'Europe',   logo: '⭐' },
-  { id: 4399, name: 'World Cup',         country: 'World',    logo: '🌍' },
+  { id: 4328, name: 'Premier League',    country: 'England', logo: '🏴󠁧󠁢󠁥󠁮󠁧󠁿' },
+  { id: 4335, name: 'La Liga',           country: 'Spain',   logo: '🇪🇸' },
+  { id: 4331, name: 'Bundesliga',        country: 'Germany', logo: '🇩🇪' },
+  { id: 4332, name: 'Serie A',           country: 'Italy',   logo: '🇮🇹' },
+  { id: 4334, name: 'Ligue 1',           country: 'France',  logo: '🇫🇷' },
+  { id: 4480, name: 'Champions League',  country: 'Europe',  logo: '⭐' },
+  { id: 4399, name: 'World Cup',         country: 'World',   logo: '🌍' },
 ];
 
 export interface FootballLeague {
@@ -74,61 +86,69 @@ export interface StandingRow {
 const cache = new Map<string, { data: any; ts: number }>();
 const CACHE_TTL = 5 * 60_000;
 
-async function get<T>(path: string): Promise<T> {
-  const url = `${BASE_URL}${path}`;
+async function get<T>(url: string): Promise<T> {
   const cached = cache.get(url);
   if (cached && Date.now() - cached.ts < CACHE_TTL) return cached.data as T;
-
   const res = await fetch(url);
-  if (!res.ok) throw new Error(`thesportsdb ${res.status}`);
+  if (!res.ok) throw new Error(`ESPN ${res.status}: ${url}`);
   const data = await res.json();
   cache.set(url, { data, ts: Date.now() });
   return data as T;
 }
 
 // ── Status mapper ─────────────────────────────────────────────────────────
-function mapStatus(raw: string): FootballStatus {
-  if (!raw) return 'scheduled';
-  const s = raw.toLowerCase();
-  if (s === 'match finished' || s === 'ft' || s === 'aet' || s === 'pen') return 'final';
-  if (s === '1h' || s === '2h' || s === 'ht' || s === 'et' || s === 'live' ||
-      s === 'extra time' || s === 'penalties') return 'live';
+function mapStatus(espnStatus: string): FootballStatus {
+  if (espnStatus === 'STATUS_FINAL' || espnStatus === 'STATUS_FULL_TIME') return 'final';
+  if (espnStatus === 'STATUS_IN_PROGRESS' || espnStatus === 'STATUS_HALFTIME') return 'live';
   return 'scheduled';
 }
 
-function mapGame(raw: any): FootballGame | null {
-  if (!raw) return null;
-  const leagueId = Number(raw.idLeague);
-  const league = SUPPORTED_LEAGUES.find(l => l.id === leagueId);
-  if (!league) return null;
+function mapGame(event: any, leagueId: number): FootballGame | null {
+  try {
+    const comp = event.competitions?.[0];
+    if (!comp) return null;
 
-  const homeScore = raw.intHomeScore !== null && raw.intHomeScore !== '' ? Number(raw.intHomeScore) : null;
-  const awayScore = raw.intAwayScore !== null && raw.intAwayScore !== '' ? Number(raw.intAwayScore) : null;
-  const status = mapStatus(raw.strStatus ?? '');
+    const home = comp.competitors?.find((c: any) => c.homeAway === 'home');
+    const away = comp.competitors?.find((c: any) => c.homeAway === 'away');
+    if (!home || !away) return null;
 
-  return {
-    id: Number(raw.idEvent),
-    leagueId,
-    leagueName: league.name,
-    date: raw.dateEvent ?? '',
-    time: raw.strTime?.substring(0, 5) ?? '',
-    homeTeam: {
-      id: Number(raw.idHomeTeam),
-      name: raw.strHomeTeam ?? '',
-      shortName: (raw.strHomeTeam ?? '').substring(0, 3).toUpperCase(),
-      logo: raw.strHomeTeamBadge ?? '',
-    },
-    awayTeam: {
-      id: Number(raw.idAwayTeam),
-      name: raw.strAwayTeam ?? '',
-      shortName: (raw.strAwayTeam ?? '').substring(0, 3).toUpperCase(),
-      logo: raw.strAwayTeamBadge ?? '',
-    },
-    homeScore: status === 'scheduled' ? null : homeScore,
-    awayScore: status === 'scheduled' ? null : awayScore,
-    status,
-    statusDetail: raw.strStatus ?? '',
-  };
+    const espnStatus = comp.status?.type?.name ?? 'STATUS_SCHEDULED';
+    const status = mapStatus(espnStatus);
+    const elapsed = comp.status?.clock ? Math.floor(comp.status.clock / 60) : undefined;
+
+    const dateStr = event.date ?? '';
+    const date = dateStr.split('T')[0] ?? '';
+    const timeUTC = dateStr.split('T')[1]?.substring(0, 5) ?? '';
+
+    const league = SUPPORTED_LEAGUES.find(l => l.id === leagueId);
+
+    return {
+      id: Number(event.id),
+      leagueId,
+      leagueName: league?.name ?? '',
+      date,
+      time: timeUTC,
+      homeTeam: {
+        id: Number(home.team.id),
+        name: home.team.displayName ?? home.team.name,
+        shortName: home.team.abbreviation ?? home.team.name.substring(0, 3).toUpperCase(),
+        logo: home.team.logo ?? '',
+      },
+      awayTeam: {
+        id: Number(away.team.id),
+        name: away.team.displayName ?? away.team.name,
+        shortName: away.team.abbreviation ?? away.team.name.substring(0, 3).toUpperCase(),
+        logo: away.team.logo ?? '',
+      },
+      homeScore: status !== 'scheduled' ? Number(home.score) : null,
+      awayScore: status !== 'scheduled' ? Number(away.score) : null,
+      status,
+      statusDetail: comp.status?.type?.shortDetail ?? '',
+      elapsed: status === 'live' ? elapsed : undefined,
+    };
+  } catch {
+    return null;
+  }
 }
 
 // ── Public API ────────────────────────────────────────────────────────────
@@ -137,37 +157,59 @@ export async function getFootballGamesByDate(
   date: string,
   leagueIds: number[]
 ): Promise<FootballGame[]> {
-  const data = await get<{ events: any[] | null }>(`/eventsday.php?d=${date}&s=Soccer`);
-  const supported = new Set(leagueIds);
-  return (data.events ?? [])
-    .map(mapGame)
-    .filter((g): g is FootballGame => g !== null && supported.has(g.leagueId));
+  const espnDate = date.replace(/-/g, '');
+  const results = await Promise.allSettled(
+    leagueIds
+      .filter(id => LEAGUE_SLUG[id])
+      .map(async id => {
+        const slug = LEAGUE_SLUG[id];
+        const data = await get<{ events?: any[] }>(
+          `${SCOREBOARD_URL}/${slug}/scoreboard?dates=${espnDate}`
+        );
+        return (data.events ?? [])
+          .map(e => mapGame(e, id))
+          .filter((g): g is FootballGame => g !== null);
+      })
+  );
+
+  return results
+    .filter((r): r is PromiseFulfilledResult<FootballGame[]> => r.status === 'fulfilled')
+    .flatMap(r => r.value)
+    .sort((a, b) => a.time.localeCompare(b.time));
 }
 
 export async function getStandings(leagueId: number, season: number): Promise<StandingRow[][]> {
-  const seasonStr = `${season}-${season + 1}`;
-  const data = await get<{ table: any[] | null }>(`/lookuptable.php?l=${leagueId}&s=${seasonStr}`);
-  if (!data.table) return [];
+  const slug = LEAGUE_SLUG[leagueId];
+  if (!slug) return [];
+
+  const data = await get<any>(`${STANDINGS_URL}/${slug}/standings`);
+  const entries = data?.children?.[0]?.standings?.entries ?? [];
+
+  const stat = (entry: any, name: string): number => {
+    const s = entry.stats?.find((s: any) => s.name === name);
+    return Number(s?.value ?? 0);
+  };
+
   return [[
-    ...data.table.map((s: any): StandingRow => ({
-      rank: Number(s.intRank ?? 0),
-      teamId: Number(s.idTeam ?? 0),
-      teamName: s.strTeam ?? '',
-      teamLogo: s.strTeamBadge ?? '',
-      played: Number(s.intPlayed ?? 0),
-      win: Number(s.intWin ?? 0),
-      draw: Number(s.intDraw ?? 0),
-      lose: Number(s.intLoss ?? 0),
-      gf: Number(s.intGoalsFor ?? 0),
-      ga: Number(s.intGoalsAgainst ?? 0),
-      gd: Number(s.intGoalDifference ?? 0),
-      points: Number(s.intPoints ?? 0),
-      form: s.strForm ?? '',
+    ...entries.map((e: any): StandingRow => ({
+      rank: stat(e, 'rank'),
+      teamId: Number(e.team?.id ?? 0),
+      teamName: e.team?.displayName ?? e.team?.name ?? '',
+      teamLogo: e.team?.logos?.[0]?.href ?? '',
+      played: stat(e, 'gamesPlayed'),
+      win: stat(e, 'wins'),
+      draw: stat(e, 'ties'),
+      lose: stat(e, 'losses'),
+      gf: stat(e, 'pointsFor'),
+      ga: stat(e, 'pointsAgainst'),
+      gd: stat(e, 'pointDifferential'),
+      points: stat(e, 'points'),
+      form: e.stats?.find((s: any) => s.name === 'form')?.displayValue ?? '',
     }))
   ]];
 }
 
-// Major football events (hardcoded with TheSportsDB IDs)
+// Major football events (hardcoded)
 const MAJOR_EVENTS: LeagueEvent[] = [
   {
     id: 4480,
@@ -201,9 +243,7 @@ export async function getMajorEvents(): Promise<LeagueEvent[]> {
   return MAJOR_EVENTS.filter(e => {
     const start = new Date(e.start);
     const end = new Date(e.end);
-    const isActive = today >= start && today <= end;
-    const isUpcoming = start > today && start <= in90;
-    return isActive || isUpcoming;
+    return (today >= start && today <= end) || (start > today && start <= in90);
   }).sort((a, b) => {
     const aActive = new Date(a.start) <= today && today <= new Date(a.end);
     const bActive = new Date(b.start) <= today && today <= new Date(b.end);
