@@ -824,7 +824,7 @@ function FootballPredictions({ group }: { group: Group }) {
           const day = String(d.getDate()).padStart(2, '0');
           return `${y}-${mo}-${day}`;
         };
-        const days = Array.from({ length: 9 }, (_, i) => localIso(i - 1)); // -1 to +7
+        const days = Array.from({ length: 4 }, (_, i) => localIso(i - 1)); // -1 to +2
         const results = await Promise.allSettled(
           days.map(date => getFootballGamesByDate(date, groupLeagueIds))
         );
