@@ -815,18 +815,22 @@ function FootballPredictions({ group }: { group: Group }) {
     async function load() {
       setError(null);
       try {
-        // Load yesterday + today + tomorrow (3 calls, cached after first load)
-        const offset = (n: number) => {
+        // Load 1 day back + 7 days forward in parallel (all cached after first load)
+        const localIso = (n: number) => {
           const d = new Date();
           d.setDate(d.getDate() + n);
-          return d.toISOString().split('T')[0];
+          const y = d.getFullYear();
+          const mo = String(d.getMonth() + 1).padStart(2, '0');
+          const day = String(d.getDate()).padStart(2, '0');
+          return `${y}-${mo}-${day}`;
         };
-        const allGames: FootballGame[] = [];
-        for (const n of [-1, 0, 1]) {
-          const dayGames = await getFootballGamesByDate(offset(n), groupLeagueIds);
-          allGames.push(...dayGames);
-          await new Promise(r => setTimeout(r, 200));
-        }
+        const days = Array.from({ length: 9 }, (_, i) => localIso(i - 1)); // -1 to +7
+        const results = await Promise.allSettled(
+          days.map(date => getFootballGamesByDate(date, groupLeagueIds))
+        );
+        const allGames: FootballGame[] = results
+          .filter((r): r is PromiseFulfilledResult<FootballGame[]> => r.status === 'fulfilled')
+          .flatMap(r => r.value);
         setGames(allGames);
 
         const snap = await getDocs(query(
