@@ -203,24 +203,27 @@ function LeagueSection({ league, games }: { league: FootballLeague; games: Footb
 }
 
 // ── Main Screen ───────────────────────────────────────────────────────────
-// Football free plan: only yesterday/today/tomorrow
 function getFootballDays() {
-  return [-1, 0, 1].map(offset => {
-    const d = new Date();
-    d.setDate(d.getDate() + offset);
-    return {
-      iso: d.toISOString().split('T')[0],
-      label: offset === -1 ? 'Yesterday' : offset === 0 ? 'Today' : 'Tomorrow',
-      offset,
-    };
-  });
+  const dates = [];
+  const now = new Date();
+  for (let i = -7; i <= 14; i++) {
+    const d = new Date(now);
+    d.setDate(now.getDate() + i);
+    const iso = d.toISOString().split('T')[0];
+    const isToday = i === 0;
+    const dayLabel = isToday ? 'Today' : d.toLocaleDateString('en-US', { weekday: 'short' });
+    const label = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    dates.push({ iso, label, dayLabel, isToday, offset: i });
+  }
+  return dates;
 }
 const FOOTBALL_DAYS = getFootballDays();
+const FOOTBALL_TODAY_INDEX = 7;
 
 export default function ScoresScreen() {
   const [sport, setSport] = useState<Sport>('nba');
   const [selectedDateIndex, setSelectedDateIndex] = useState(TODAY_INDEX);
-  const [footballDayOffset, setFootballDayOffset] = useState(0); // -1, 0, 1
+  const [footballDateIndex, setFootballDateIndex] = useState(FOOTBALL_TODAY_INDEX);
   const [selectedLeagues, setSelectedLeagues] = useState<number[]>(ALL_LEAGUE_IDS);
 
   // NBA state
@@ -277,7 +280,7 @@ export default function ScoresScreen() {
     }
   }, []);
 
-  const footballDate = FOOTBALL_DAYS.find(d => d.offset === footballDayOffset)!.iso;
+  const footballDate = FOOTBALL_DAYS[footballDateIndex].iso;
 
   // NBA: load when date changes (skip index 7 on mount — handled below)
   const mountedRef = useRef(false);
@@ -287,7 +290,7 @@ export default function ScoresScreen() {
   }, [selectedDate]);
 
   // Football: load when football day changes
-  useEffect(() => { if (sport === 'football') loadFootball(footballDate); }, [footballDayOffset]);
+  useEffect(() => { if (sport === 'football') loadFootball(footballDate); }, [footballDateIndex]);
 
   // Switch sport: load football if first visit
   useEffect(() => {
@@ -387,20 +390,19 @@ export default function ScoresScreen() {
               })}
             </ScrollView>
           </View>
-          <View style={styles.footballDayBar}>
-            {FOOTBALL_DAYS.map(d => {
-              const sel = d.offset === footballDayOffset;
-              return (
-                <TouchableOpacity
-                  key={d.offset}
-                  style={[styles.footballDayBtn, sel && styles.footballDayBtnSel]}
-                  onPress={() => setFootballDayOffset(d.offset)}
-                >
-                  <Text style={[styles.footballDayText, sel && styles.footballDayTextSel]}>{d.label}</Text>
-                  <Text style={[styles.footballDayDate, sel && styles.footballDayTextSel]}>{d.iso}</Text>
-                </TouchableOpacity>
-              );
-            })}
+          <View style={styles.dateBar}>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.dateBarInner}>
+              {FOOTBALL_DAYS.map((d, i) => {
+                const sel = i === footballDateIndex;
+                return (
+                  <TouchableOpacity key={d.iso} style={[styles.dateChip, sel && styles.dateChipSel]} onPress={() => setFootballDateIndex(i)}>
+                    <Text style={[styles.dateDayText, sel && styles.dateTextSel, d.isToday && !sel && styles.dateTodayText]}>{d.dayLabel}</Text>
+                    <Text style={[styles.dateDateText, sel && styles.dateTextSel]}>{d.label}</Text>
+                    {d.isToday && <View style={styles.todayDot} />}
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
           </View>
           {footballLiveCount > 0 && !footballLoading && (
             <View style={styles.liveBanner}>

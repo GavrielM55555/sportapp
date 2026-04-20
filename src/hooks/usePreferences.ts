@@ -1,5 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { SUPPORTED_LEAGUES } from '../api/apifootball';
+
+const VALID_LEAGUE_IDS = new Set(SUPPORTED_LEAGUES.map(l => l.id));
 
 export type SportPref = 'nba' | 'football';
 
@@ -24,7 +27,14 @@ export function usePreferences() {
   useEffect(() => {
     AsyncStorage.getItem(STORAGE_KEY).then(raw => {
       if (raw) {
-        try { setPrefs(JSON.parse(raw)); } catch { /* ignore bad data */ }
+        try {
+          const parsed = JSON.parse(raw);
+          // Reset league IDs if they contain old API-Sports IDs
+          if (parsed.leagueIds?.some((id: number) => !VALID_LEAGUE_IDS.has(id))) {
+            parsed.leagueIds = [];
+          }
+          setPrefs(parsed);
+        } catch { /* ignore bad data */ }
       }
       setLoaded(true);
     });

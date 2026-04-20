@@ -10,6 +10,7 @@ import {
 } from 'firebase/auth';
 import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { auth, db } from '../firebase/config';
+import { registerPushToken } from '../notifications/registerPushToken';
 
 async function upsertUserDoc(user: User) {
   await setDoc(
@@ -33,7 +34,10 @@ export function useAuth() {
     const unsubscribe = onAuthStateChanged(auth, (u) => {
       setUser(u);
       setLoading(false);
-      if (u) upsertUserDoc(u).catch(console.error);
+      if (u) {
+        upsertUserDoc(u).catch(console.error);
+        registerPushToken(u.uid).catch(console.error);
+      }
     });
     // On web, handle redirect result after Google redirects back
     if (Platform.OS === 'web') {
