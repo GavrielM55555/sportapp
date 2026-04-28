@@ -2,17 +2,9 @@ const SCOREBOARD_URL = 'https://site.api.espn.com/apis/site/v2/sports/basketball
 const STANDINGS_URL = 'https://site.api.espn.com/apis/v2/sports/basketball';
 
 const LEAGUE_SLUG: Record<number, string> = {
-  6001: 'eur.1',    // EuroLeague
-  6002: 'eurocup',  // EuroCup
-  6003: 'nba.gl',   // G League
-  6004: 'nbl',      // Australia NBL
-  6005: 'acb',      // Spain ACB
-  6006: 'bbl',      // Germany BBL
-  6007: 'lnb',      // France Pro A
-  6008: 'ita.1',    // Italy Lega Basket
-  6009: 'vtb',      // Russia VTB United League
-  6010: 'bra.1',    // Brazil NBB
-  6011: 'cba',      // China CBA
+  6001: 'wnba',  // WNBA
+  6002: 'nbl',   // Australia NBL
+  6003: 'fiba',  // FIBA (World Cup / competitions)
 };
 
 // NBA standings use ESPN too (games come from BallDontLie but standings from ESPN)
@@ -39,17 +31,9 @@ export interface BasketballLeague {
 }
 
 export const BASKETBALL_LEAGUES: BasketballLeague[] = [
-  { id: 6001, name: 'EuroLeague',  country: 'Europe',    logo: '⭐' },
-  { id: 6002, name: 'EuroCup',     country: 'Europe',    logo: '🏀' },
-  { id: 6004, name: 'NBL',         country: 'Australia', logo: '🇦🇺' },
-  { id: 6005, name: 'ACB',         country: 'Spain',     logo: '🇪🇸' },
-  { id: 6006, name: 'BBL',         country: 'Germany',   logo: '🇩🇪' },
-  { id: 6007, name: 'Pro A',       country: 'France',    logo: '🇫🇷' },
-  { id: 6008, name: 'Lega Basket', country: 'Italy',     logo: '🇮🇹' },
-  { id: 6009, name: 'VTB League',  country: 'Russia',    logo: '🇷🇺' },
-  { id: 6010, name: 'NBB',         country: 'Brazil',    logo: '🇧🇷' },
-  { id: 6011, name: 'CBA',         country: 'China',     logo: '🇨🇳' },
-  { id: 6003, name: 'G League',    country: 'USA',       logo: '🇺🇸' },
+  { id: 6001, name: 'WNBA',  country: 'USA',       logo: '🏀' },
+  { id: 6002, name: 'NBL',   country: 'Australia', logo: '🇦🇺' },
+  { id: 6003, name: 'FIBA',  country: 'World',     logo: '🌍' },
 ];
 
 export interface BasketballGame {

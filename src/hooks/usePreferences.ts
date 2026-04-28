@@ -37,8 +37,9 @@ export function usePreferences() {
             parsed.leagueIds = [];
           }
           if (!parsed.basketballLeagueIds) parsed.basketballLeagueIds = [];
+          // Reset any old basketball IDs that no longer exist
           if (parsed.basketballLeagueIds?.some((id: number) => !VALID_BASKETBALL_IDS.has(id))) {
-            parsed.basketballLeagueIds = [];
+            parsed.basketballLeagueIds = parsed.basketballLeagueIds.filter((id: number) => VALID_BASKETBALL_IDS.has(id));
           }
           setPrefs(parsed);
         } catch { /* ignore bad data */ }
