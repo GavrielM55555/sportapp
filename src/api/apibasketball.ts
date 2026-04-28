@@ -1,4 +1,5 @@
 const SCOREBOARD_URL = 'https://site.api.espn.com/apis/site/v2/sports/basketball';
+const STANDINGS_URL = 'https://site.api.espn.com/apis/v2/sports/basketball';
 
 const LEAGUE_SLUG: Record<number, string> = {
   6001: 'eur.1',    // EuroLeague
@@ -13,6 +14,22 @@ const LEAGUE_SLUG: Record<number, string> = {
   6010: 'bra.1',    // Brazil NBB
   6011: 'cba',      // China CBA
 };
+
+// NBA standings use ESPN too (games come from BallDontLie but standings from ESPN)
+const NBA_STANDINGS_SLUG = 'nba';
+
+export interface BasketballStandingRow {
+  rank: number;
+  teamId: number;
+  teamName: string;
+  teamLogo: string;
+  played: number;
+  win: number;
+  lose: number;
+  pct: string;
+  gb: string;
+  points: number;
+}
 
 export interface BasketballLeague {
   id: number;
@@ -136,4 +153,53 @@ export async function getBasketballGamesByDate(
     .filter((r): r is PromiseFulfilledResult<BasketballGame[]> => r.status === 'fulfilled')
     .flatMap(r => r.value)
     .sort((a, b) => a.time.localeCompare(b.time));
+}
+
+export async function getBasketballStandings(leagueId: number | 'nba'): Promise<BasketballStandingRow[][]> {
+  const slug = leagueId === 'nba' ? NBA_STANDINGS_SLUG : LEAGUE_SLUG[leagueId as number];
+  if (!slug) return [];
+
+  const data = await get<any>(`${STANDINGS_URL}/${slug}/standings`);
+
+  const stat = (entry: any, name: string): any => {
+    const s = entry.stats?.find((s: any) => s.name === name);
+    return s?.value ?? s?.displayValue ?? 0;
+  };
+
+  // NBA has conference standings (children), others have flat standings
+  const children = data?.children ?? [];
+  if (children.length > 0) {
+    return children.map((conf: any) => {
+      const entries = conf.standings?.entries ?? [];
+      return entries.map((e: any, i: number): BasketballStandingRow => ({
+        rank: i + 1,
+        teamId: Number(e.team?.id ?? 0),
+        teamName: e.team?.displayName ?? e.team?.name ?? '',
+        teamLogo: e.team?.logos?.[0]?.href ?? '',
+        played: Number(stat(e, 'gamesPlayed')),
+        win: Number(stat(e, 'wins')),
+        lose: Number(stat(e, 'losses')),
+        pct: e.stats?.find((s: any) => s.name === 'winPercent')?.displayValue ?? '',
+        gb: e.stats?.find((s: any) => s.name === 'gamesBehind')?.displayValue ?? '-',
+        points: Number(stat(e, 'points')),
+      }));
+    });
+  }
+
+  // Flat standings (EuroLeague etc.)
+  const entries = data?.standings?.entries ?? [];
+  return [[
+    ...entries.map((e: any, i: number): BasketballStandingRow => ({
+      rank: i + 1,
+      teamId: Number(e.team?.id ?? 0),
+      teamName: e.team?.displayName ?? e.team?.name ?? '',
+      teamLogo: e.team?.logos?.[0]?.href ?? '',
+      played: Number(stat(e, 'gamesPlayed')),
+      win: Number(stat(e, 'wins')),
+      lose: Number(stat(e, 'losses')),
+      pct: e.stats?.find((s: any) => s.name === 'winPercent')?.displayValue ?? '',
+      gb: e.stats?.find((s: any) => s.name === 'gamesBehind')?.displayValue ?? '-',
+      points: Number(stat(e, 'points')),
+    }))
+  ]];
 }

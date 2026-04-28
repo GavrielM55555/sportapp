@@ -12,7 +12,7 @@ import {
 } from 'react-native';
 import { getGamesByDates } from '../../src/api/balldontlie';
 import { getFootballGamesByDate, getStandings, SUPPORTED_LEAGUES, FootballGame, FootballLeague, StandingRow } from '../../src/api/apifootball';
-import { getBasketballGamesByDate, BASKETBALL_LEAGUES, BasketballGame, BasketballLeague } from '../../src/api/apibasketball';
+import { getBasketballGamesByDate, getBasketballStandings, BASKETBALL_LEAGUES, BasketballGame, BasketballLeague, BasketballStandingRow } from '../../src/api/apibasketball';
 import { usePreferences } from '../../src/hooks/usePreferences';
 import { Game } from '../../src/types';
 import { GameCard } from '../../src/components/GameCard';
@@ -153,6 +153,98 @@ function BasketballCard({ game }: { game: BasketballGame }) {
           )}
         </View>
       </View>
+    </View>
+  );
+}
+
+// ── Basketball league section with Games / Table toggle ───────────────────
+function BasketballLeagueSection({
+  leagueId, name, country, logo, games,
+}: { leagueId: number | 'nba'; name: string; country: string; logo: string; games: BasketballGame[] | null }) {
+  const [view, setView] = useState<'games' | 'table'>('games');
+  const [standings, setStandings] = useState<BasketballStandingRow[][]>([]);
+  const [standingsLoading, setStandingsLoading] = useState(false);
+  const [standingsError, setStandingsError] = useState(false);
+
+  const loadStandings = async () => {
+    setStandingsLoading(true);
+    setStandingsError(false);
+    try {
+      const rows = await getBasketballStandings(leagueId);
+      setStandings(rows);
+    } catch {
+      setStandingsError(true);
+    } finally {
+      setStandingsLoading(false);
+    }
+  };
+
+  const handleToggle = (next: 'games' | 'table') => {
+    setView(next);
+    if (next === 'table' && standings.length === 0 && !standingsLoading) loadStandings();
+  };
+
+  return (
+    <View style={styles.leagueSection}>
+      <View style={styles.leagueHeader}>
+        <Text style={styles.leagueHeaderEmoji}>{logo}</Text>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.leagueHeaderName}>{name}</Text>
+          <Text style={styles.leagueHeaderCountry}>{country}</Text>
+        </View>
+        <View style={styles.viewToggle}>
+          <TouchableOpacity style={[styles.toggleBtn, view === 'games' && styles.toggleBtnActive]} onPress={() => handleToggle('games')}>
+            <Text style={[styles.toggleBtnText, view === 'games' && styles.toggleBtnTextActive]}>Games</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={[styles.toggleBtn, view === 'table' && styles.toggleBtnActive]} onPress={() => handleToggle('table')}>
+            <Text style={[styles.toggleBtnText, view === 'table' && styles.toggleBtnTextActive]}>Table</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+
+      {view === 'games' && (games ?? []).map(g => <BasketballCard key={g.id} game={g} />)}
+      {view === 'games' && (games ?? []).length === 0 && (
+        <View style={styles.tableCenter}><Text style={styles.tableError}>No games on this date</Text></View>
+      )}
+
+      {view === 'table' && (
+        standingsLoading ? (
+          <View style={styles.tableCenter}><ActivityIndicator color="#f97316" /></View>
+        ) : standingsError ? (
+          <View style={styles.tableCenter}>
+            <Text style={styles.tableError}>Failed to load table</Text>
+            <TouchableOpacity onPress={loadStandings}><Text style={styles.tableRetry}>Retry</Text></TouchableOpacity>
+          </View>
+        ) : standings.length === 0 ? (
+          <View style={styles.tableCenter}><Text style={styles.tableError}>No standings available</Text></View>
+        ) : (
+          standings.map((group, gi) => (
+            <View key={gi}>
+              <View style={styles.tableHeaderRow}>
+                <Text style={[styles.tableCell, styles.tableCellRank]}>#</Text>
+                <Text style={[styles.tableCell, { flex: 1 }]}>Team</Text>
+                <Text style={styles.tableCell}>P</Text>
+                <Text style={styles.tableCell}>W</Text>
+                <Text style={styles.tableCell}>L</Text>
+                <Text style={[styles.tableCell, styles.tableCellPts]}>PCT</Text>
+              </View>
+              {group.map((row, i) => (
+                <View key={row.teamId} style={[styles.tableRow, i % 2 === 0 && styles.tableRowAlt]}>
+                  <Text style={[styles.tableCell, styles.tableCellRank, styles.tableCellData]}>{row.rank}</Text>
+                  <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <Image source={{ uri: row.teamLogo }} style={styles.tableTeamLogo} />
+                    <Text style={styles.tableTeamName} numberOfLines={1}>{row.teamName}</Text>
+                  </View>
+                  <Text style={[styles.tableCell, styles.tableCellData]}>{row.played}</Text>
+                  <Text style={[styles.tableCell, styles.tableCellData]}>{row.win}</Text>
+                  <Text style={[styles.tableCell, styles.tableCellData]}>{row.lose}</Text>
+                  <Text style={[styles.tableCell, styles.tableCellPts, styles.tableCellData, styles.tableCellPtsVal]}>{row.pct}</Text>
+                </View>
+              ))}
+            </View>
+          ))
+        )
+      )}
     </View>
   );
 }
@@ -537,39 +629,41 @@ export default function ScoresScreen() {
             refreshControl={<RefreshControl refreshing={nbaRefreshing} onRefresh={() => { setNbaRefreshing(true); loadNba(selectedDate, true); }} tintColor="#f97316" />}
           >
             {/* NBA games */}
-            {(!showNba || nbaGames.length === 0) && basketballGames.length === 0 ? (
-              <View style={styles.center}><Text style={styles.emptyText}>No games on this date</Text></View>
+            {!showNba && extraBasketballIds.length === 0 ? (
+              <View style={styles.center}><Text style={styles.emptyText}>Select a league above</Text></View>
             ) : (
               <>
-                {showNba && nbaGames.length > 0 && (
-                  <View style={styles.leagueSection}>
-                    <View style={styles.leagueHeader}>
-                      <Text style={styles.leagueHeaderEmoji}>🏀</Text>
-                      <View style={{ flex: 1 }}>
-                        <Text style={styles.leagueHeaderName}>NBA</Text>
-                        <Text style={styles.leagueHeaderCountry}>USA</Text>
-                      </View>
-                    </View>
-                    {nbaGames.map(g => <GameCard key={g.id} game={g} />)}
-                  </View>
+                {showNba && (
+                  <BasketballLeagueSection
+                    leagueId="nba"
+                    name="NBA"
+                    country="USA"
+                    logo="🏀"
+                    games={nbaGames.map(g => ({
+                      id: g.id,
+                      leagueId: 0,
+                      leagueName: 'NBA',
+                      date: g.date.split('T')[0],
+                      time: g.time ?? '',
+                      homeTeam: { id: g.homeTeam.id, name: `${g.homeTeam.city} ${g.homeTeam.name}`, shortName: g.homeTeam.abbreviation, logo: '' },
+                      awayTeam: { id: g.awayTeam.id, name: `${g.awayTeam.city} ${g.awayTeam.name}`, shortName: g.awayTeam.abbreviation, logo: '' },
+                      homeScore: g.homeScore,
+                      awayScore: g.awayScore,
+                      status: g.status,
+                      statusDetail: '',
+                    }))}
+                  />
                 )}
-                {/* Extra basketball leagues */}
-                {BASKETBALL_LEAGUES.filter(l => extraBasketballIds.includes(l.id)).map(league => {
-                  const games = basketballGames.filter(g => g.leagueId === league.id);
-                  if (games.length === 0) return null;
-                  return (
-                    <View key={league.id} style={styles.leagueSection}>
-                      <View style={styles.leagueHeader}>
-                        <Text style={styles.leagueHeaderEmoji}>{league.logo}</Text>
-                        <View style={{ flex: 1 }}>
-                          <Text style={styles.leagueHeaderName}>{league.name}</Text>
-                          <Text style={styles.leagueHeaderCountry}>{league.country}</Text>
-                        </View>
-                      </View>
-                      {games.map(g => <BasketballCard key={g.id} game={g} />)}
-                    </View>
-                  );
-                })}
+                {BASKETBALL_LEAGUES.filter(l => extraBasketballIds.includes(l.id)).map(league => (
+                  <BasketballLeagueSection
+                    key={league.id}
+                    leagueId={league.id}
+                    name={league.name}
+                    country={league.country}
+                    logo={league.logo}
+                    games={basketballGames.filter(g => g.leagueId === league.id)}
+                  />
+                ))}
               </>
             )}
           </ScrollView>
