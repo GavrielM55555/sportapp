@@ -165,7 +165,7 @@ function BasketballCard({ game }: { game: BasketballGame }) {
 
 // ── Edit preferences modal ─────────────────────────────────────────────────
 const SPORTS_LIST: { id: SportPref; label: string; emoji: string }[] = [
-  { id: 'nba', label: 'NBA', emoji: '🏀' },
+  { id: 'nba', label: 'Basketball', emoji: '🏀' },
   { id: 'football', label: 'Football', emoji: '⚽' },
 ];
 
@@ -199,11 +199,16 @@ function EditPrefsModal({ visible, onClose }: { visible: boolean; onClose: () =>
             })}
           </View>
 
-          {hasNba && BASKETBALL_LEAGUES.length > 0 && (
+          {hasNba && (
             <>
-              <Text style={styles.modalSectionLabel}>More Basketball</Text>
+              <Text style={styles.modalSectionLabel}>Basketball Leagues</Text>
               <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 16 }}>
                 <View style={styles.leagueChipRow}>
+                  {/* NBA is always included when Basketball sport is selected */}
+                  <View style={[styles.leagueChip, styles.leagueChipActive]}>
+                    <Text style={styles.leagueEmoji}>🏀</Text>
+                    <Text style={[styles.leagueName, styles.leagueNameActive]}>NBA · USA</Text>
+                  </View>
                   {BASKETBALL_LEAGUES.map(l => {
                     const active = prefs.basketballLeagueIds.includes(l.id);
                     return (
@@ -417,7 +422,7 @@ export default function ForYouScreen() {
             style={[styles.sportBtn, currentSport === 'nba' && styles.sportBtnActive]}
             onPress={() => setActiveSport('nba')}
           >
-            <Text style={[styles.sportBtnText, currentSport === 'nba' && styles.sportBtnTextActive]}>🏀 NBA</Text>
+            <Text style={[styles.sportBtnText, currentSport === 'nba' && styles.sportBtnTextActive]}>🏀 Basketball</Text>
           </TouchableOpacity>
           <TouchableOpacity
             style={[styles.sportBtn, currentSport === 'football' && styles.sportBtnActive]}
