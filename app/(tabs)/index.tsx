@@ -429,7 +429,7 @@ export default function ScoresScreen() {
           style={[styles.sportBtn, sport === 'nba' && styles.sportBtnActive]}
           onPress={() => setSport('nba')}
         >
-          <Text style={[styles.sportBtnText, sport === 'nba' && styles.sportBtnTextActive]}>🏀 NBA</Text>
+          <Text style={[styles.sportBtnText, sport === 'nba' && styles.sportBtnTextActive]}>🏀 Basketball</Text>
         </TouchableOpacity>
         <TouchableOpacity
           style={[styles.sportBtn, sport === 'football' && styles.sportBtnActive]}

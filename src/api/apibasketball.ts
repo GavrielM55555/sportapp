@@ -9,6 +9,9 @@ const LEAGUE_SLUG: Record<number, string> = {
   6006: 'bbl',      // Germany BBL
   6007: 'lnb',      // France Pro A
   6008: 'ita.1',    // Italy Lega Basket
+  6009: 'vtb',      // Russia VTB United League
+  6010: 'bra.1',    // Brazil NBB
+  6011: 'cba',      // China CBA
 };
 
 export interface BasketballLeague {
@@ -26,6 +29,9 @@ export const BASKETBALL_LEAGUES: BasketballLeague[] = [
   { id: 6006, name: 'BBL',         country: 'Germany',   logo: '🇩🇪' },
   { id: 6007, name: 'Pro A',       country: 'France',    logo: '🇫🇷' },
   { id: 6008, name: 'Lega Basket', country: 'Italy',     logo: '🇮🇹' },
+  { id: 6009, name: 'VTB League',  country: 'Russia',    logo: '🇷🇺' },
+  { id: 6010, name: 'NBB',         country: 'Brazil',    logo: '🇧🇷' },
+  { id: 6011, name: 'CBA',         country: 'China',     logo: '🇨🇳' },
   { id: 6003, name: 'G League',    country: 'USA',       logo: '🇺🇸' },
 ];
 
