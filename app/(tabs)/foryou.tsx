@@ -1,15 +1,14 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import {
-  View, Text, StyleSheet, TouchableOpacity, ScrollView, FlatList,
+  View, Text, StyleSheet, TouchableOpacity, ScrollView,
   ActivityIndicator, RefreshControl, Image, Modal,
 } from 'react-native';
 import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { usePreferences, SportPref } from '../../src/hooks/usePreferences';
 import { getGamesByDates } from '../../src/api/balldontlie';
-import {
-  getFootballGamesByDate, SUPPORTED_LEAGUES, FootballGame, FootballLeague,
-} from '../../src/api/apifootball';
+import { getFootballGamesByDate, SUPPORTED_LEAGUES, FootballGame } from '../../src/api/apifootball';
+import { getBasketballGamesByDate, BASKETBALL_LEAGUES, BasketballGame } from '../../src/api/apibasketball';
 import { Game } from '../../src/types';
 import { GameCard } from '../../src/components/GameCard';
 
@@ -110,6 +109,60 @@ function FootballMatchCard({ game }: { game: FootballGame }) {
   );
 }
 
+// ── Basketball card ────────────────────────────────────────────────────────
+function BasketballCard({ game }: { game: BasketballGame }) {
+  const isLive = game.status === 'live';
+  const isFinal = game.status === 'final';
+  const hasScore = game.homeScore !== null && game.awayScore !== null;
+  const homeWin = isFinal && hasScore && game.homeScore! > game.awayScore!;
+  const awayWin = isFinal && hasScore && game.awayScore! > game.homeScore!;
+  let statusLabel = 'TBD';
+  let statusColor = '#9ca3af';
+  if (isLive) { statusLabel = game.elapsed ?? 'LIVE'; statusColor = '#ef4444'; }
+  else if (isFinal) { statusLabel = 'FT'; statusColor = '#4b5563'; }
+  else if (game.time) {
+    try {
+      const [h, m] = game.time.split(':');
+      const d = new Date(); d.setUTCHours(parseInt(h), parseInt(m));
+      statusLabel = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    } catch { statusLabel = game.time; }
+  }
+  return (
+    <View style={[styles.fCard, isLive && styles.fCardLive]}>
+      {isLive && <View style={styles.fLiveStripe} />}
+      <View style={styles.fInner}>
+        <View style={styles.fTeams}>
+          <View style={styles.fTeamRow}>
+            {game.homeTeam.logo
+              ? <Image source={{ uri: game.homeTeam.logo }} style={styles.fLogo} />
+              : <View style={[styles.fLogo, styles.fLogoPlaceholder]}><Text style={styles.fLogoText}>{game.homeTeam.name[0]}</Text></View>}
+            <Text style={[styles.fTeamName, homeWin && styles.fTeamWinner]} numberOfLines={1}>{game.homeTeam.name}</Text>
+          </View>
+          <View style={styles.fTeamRow}>
+            {game.awayTeam.logo
+              ? <Image source={{ uri: game.awayTeam.logo }} style={styles.fLogo} />
+              : <View style={[styles.fLogo, styles.fLogoPlaceholder]}><Text style={styles.fLogoText}>{game.awayTeam.name[0]}</Text></View>}
+            <Text style={[styles.fTeamName, awayWin && styles.fTeamWinner]} numberOfLines={1}>{game.awayTeam.name}</Text>
+          </View>
+        </View>
+        <View style={styles.fStatus}>
+          <Text style={[styles.fStatusText, { color: statusColor }, isLive && styles.fStatusLive]}>{isLive ? '● ' : ''}{statusLabel}</Text>
+        </View>
+        <View style={styles.fScores}>
+          {hasScore ? (
+            <>
+              <Text style={[styles.fScore, homeWin && styles.fScoreWinner, isLive && styles.fScoreLive]}>{game.homeScore}</Text>
+              <Text style={[styles.fScore, awayWin && styles.fScoreWinner, isLive && styles.fScoreLive]}>{game.awayScore}</Text>
+            </>
+          ) : (
+            <><Text style={styles.fScoreDash}>-</Text><Text style={styles.fScoreDash}>-</Text></>
+          )}
+        </View>
+      </View>
+    </View>
+  );
+}
+
 // ── Edit preferences modal ─────────────────────────────────────────────────
 const SPORTS_LIST: { id: SportPref; label: string; emoji: string }[] = [
   { id: 'nba', label: 'NBA', emoji: '🏀' },
@@ -117,7 +170,8 @@ const SPORTS_LIST: { id: SportPref; label: string; emoji: string }[] = [
 ];
 
 function EditPrefsModal({ visible, onClose }: { visible: boolean; onClose: () => void }) {
-  const { prefs, toggleSport, toggleLeague } = usePreferences();
+  const { prefs, toggleSport, toggleLeague, toggleBasketballLeague } = usePreferences();
+  const hasNba = prefs.sports.includes('nba');
   const hasFootball = prefs.sports.includes('football');
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
@@ -144,6 +198,29 @@ function EditPrefsModal({ visible, onClose }: { visible: boolean; onClose: () =>
               );
             })}
           </View>
+
+          {hasNba && BASKETBALL_LEAGUES.length > 0 && (
+            <>
+              <Text style={styles.modalSectionLabel}>More Basketball</Text>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 16 }}>
+                <View style={styles.leagueChipRow}>
+                  {BASKETBALL_LEAGUES.map(l => {
+                    const active = prefs.basketballLeagueIds.includes(l.id);
+                    return (
+                      <TouchableOpacity
+                        key={l.id}
+                        style={[styles.leagueChip, active && styles.leagueChipActive]}
+                        onPress={() => toggleBasketballLeague(l.id)}
+                      >
+                        <Text style={styles.leagueEmoji}>{l.logo}</Text>
+                        <Text style={[styles.leagueName, active && styles.leagueNameActive]}>{l.name} · {l.country}</Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </ScrollView>
+            </>
+          )}
 
           {hasFootball && (
             <>
@@ -204,6 +281,11 @@ export default function ForYouScreen() {
   const nbaGen = useRef(0);
   const dateScrollRef = useRef<ScrollView>(null);
 
+  // Extra basketball state
+  const [extraBballGames, setExtraBballGames] = useState<BasketballGame[]>([]);
+  const [extraBballLoading, setExtraBballLoading] = useState(false);
+  const extraBballGen = useRef(0);
+
   // Football state
   const [fbDayOffset, setFbDayOffset] = useState(0);
   const [fbGames, setFbGames] = useState<FootballGame[]>([]);
@@ -226,6 +308,20 @@ export default function ForYouScreen() {
       if (gen !== nbaGen.current) return;
       setNbaLoading(false);
       setNbaRefreshing(false);
+    }
+  }, []);
+
+  const loadExtraBasketball = useCallback(async (date: string, ids: number[]) => {
+    if (ids.length === 0) { setExtraBballGames([]); return; }
+    const gen = ++extraBballGen.current;
+    setExtraBballLoading(true);
+    try {
+      const data = await getBasketballGamesByDate(date, ids);
+      if (gen !== extraBballGen.current) return;
+      setExtraBballGames(data);
+    } catch { /* silent */ } finally {
+      if (gen !== extraBballGen.current) return;
+      setExtraBballLoading(false);
     }
   }, []);
 
@@ -252,6 +348,11 @@ export default function ForYouScreen() {
   useEffect(() => {
     if (hasNba) loadNba(selectedNbaDate);
   }, [selectedNbaDate, hasNba]);
+
+  // Load extra basketball on date or league prefs change
+  useEffect(() => {
+    if (hasNba) loadExtraBasketball(selectedNbaDate, prefs.basketballLeagueIds ?? []);
+  }, [selectedNbaDate, hasNba, prefs.basketballLeagueIds]);
 
   // Load football on mount + day change
   useEffect(() => {
@@ -348,14 +449,47 @@ export default function ForYouScreen() {
           {nbaLoading ? (
             <View style={styles.center}><ActivityIndicator size="large" color="#f97316" /></View>
           ) : (
-            <FlatList
-              data={nbaGames}
-              keyExtractor={g => String(g.id)}
-              renderItem={({ item }) => <GameCard game={item} />}
+            <ScrollView
+              contentContainerStyle={{ paddingVertical: 8, paddingBottom: 40, flexGrow: 1 }}
               refreshControl={<RefreshControl refreshing={nbaRefreshing} onRefresh={() => { setNbaRefreshing(true); loadNba(selectedNbaDate, true); }} tintColor="#f97316" />}
-              ListEmptyComponent={<View style={styles.center}><Text style={styles.emptyText}>No NBA games on this date</Text></View>}
-              contentContainerStyle={{ paddingVertical: 8, flexGrow: 1 }}
-            />
+            >
+              {/* NBA games */}
+              {nbaGames.length === 0 ? (
+                <View style={[styles.center, { paddingVertical: 24 }]}><Text style={styles.emptyText}>No NBA games on this date</Text></View>
+              ) : (
+                <View style={styles.leagueSection}>
+                  <View style={styles.leagueHeader}>
+                    <Text style={styles.leagueHeaderEmoji}>🏀</Text>
+                    <View>
+                      <Text style={styles.leagueHeaderName}>NBA</Text>
+                      <Text style={styles.leagueHeaderCountry}>USA</Text>
+                    </View>
+                  </View>
+                  {nbaGames.map(g => <GameCard key={g.id} game={g} />)}
+                </View>
+              )}
+              {/* Extra basketball leagues */}
+              {extraBballLoading && <ActivityIndicator size="small" color="#f97316" style={{ marginTop: 8 }} />}
+              {!extraBballLoading && BASKETBALL_LEAGUES
+                .filter(l => (prefs.basketballLeagueIds ?? []).includes(l.id))
+                .map(league => {
+                  const games = extraBballGames.filter(g => g.leagueId === league.id);
+                  if (games.length === 0) return null;
+                  return (
+                    <View key={league.id} style={styles.leagueSection}>
+                      <View style={styles.leagueHeader}>
+                        <Text style={styles.leagueHeaderEmoji}>{league.logo}</Text>
+                        <View>
+                          <Text style={styles.leagueHeaderName}>{league.name}</Text>
+                          <Text style={styles.leagueHeaderCountry}>{league.country}</Text>
+                        </View>
+                      </View>
+                      {games.map(game => <BasketballCard key={game.id} game={game} />)}
+                    </View>
+                  );
+                })
+              }
+            </ScrollView>
           )}
         </>
       )}
