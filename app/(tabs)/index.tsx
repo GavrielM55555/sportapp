@@ -412,6 +412,8 @@ export default function ScoresScreen() {
     );
   };
 
+  const { toggleBasketballLeague } = usePreferences();
+
   const visibleFootball = footballGames.filter(g => selectedLeagues.includes(g.leagueId));
   const footballLiveCount = visibleFootball.filter(g => g.status === 'live').length;
   const groupedFootball = SUPPORTED_LEAGUES
@@ -437,6 +439,31 @@ export default function ScoresScreen() {
           <Text style={[styles.sportBtnText, sport === 'football' && styles.sportBtnTextActive]}>⚽ Football</Text>
         </TouchableOpacity>
       </View>
+
+      {/* ── NBA: extra basketball league filter ── */}
+      {sport === 'nba' && BASKETBALL_LEAGUES.length > 0 && (
+        <View style={styles.leagueBar}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.leagueBarInner}>
+            <View style={[styles.leagueChip, styles.leagueChipNba]}>
+              <Text style={styles.leagueChipEmoji}>🏀</Text>
+              <Text style={[styles.leagueChipText, styles.leagueChipTextActive]}>NBA</Text>
+            </View>
+            {BASKETBALL_LEAGUES.map(l => {
+              const active = extraBasketballIds.includes(l.id);
+              return (
+                <TouchableOpacity
+                  key={l.id}
+                  style={[styles.leagueChip, active && styles.leagueChipActive]}
+                  onPress={() => toggleBasketballLeague(l.id)}
+                >
+                  <Text style={styles.leagueChipEmoji}>{l.logo}</Text>
+                  <Text style={[styles.leagueChipText, active && styles.leagueChipTextActive]}>{l.name}</Text>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+        </View>
+      )}
 
       {/* ── NBA: full scrollable date strip ── */}
       {sport === 'nba' && (
@@ -606,6 +633,7 @@ const styles = StyleSheet.create({
   leagueBarInner: { paddingHorizontal: 12, paddingVertical: 8, gap: 6 },
   leagueChip: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 11, paddingVertical: 6, borderRadius: 16, backgroundColor: '#1a2634', borderWidth: 1, borderColor: 'transparent' },
   leagueChipActive: { borderColor: '#f97316', backgroundColor: '#1f1200' },
+  leagueChipNba: { borderColor: '#f97316', backgroundColor: '#1f1200', opacity: 1 },
   leagueChipEmoji: { fontSize: 13 },
   leagueChipText: { fontSize: 12, fontWeight: '600', color: '#6b7280' },
   leagueChipTextActive: { color: '#f97316' },
