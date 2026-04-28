@@ -5,6 +5,7 @@ import {
 import { router } from 'expo-router';
 import { usePreferences, SportPref } from '../src/hooks/usePreferences';
 import { SUPPORTED_LEAGUES } from '../src/api/apifootball';
+import { BASKETBALL_LEAGUES } from '../src/api/apibasketball';
 
 const SPORTS: { id: SportPref; label: string; emoji: string; desc: string }[] = [
   { id: 'nba', label: 'NBA', emoji: '🏀', desc: 'Regular season & playoffs' },
@@ -15,6 +16,7 @@ export default function OnboardingScreen() {
   const { prefs, toggleSport, toggleLeague, completeOnboarding, save } = usePreferences();
   const [localSports, setLocalSports] = useState<SportPref[]>([]);
   const [localLeagues, setLocalLeagues] = useState<number[]>([]);
+  const [localBasketballLeagues, setLocalBasketballLeagues] = useState<number[]>([]);
 
   const toggleLocalSport = (id: SportPref) => {
     setLocalSports(prev =>
@@ -31,11 +33,18 @@ export default function OnboardingScreen() {
     );
   };
 
+  const toggleLocalBasketballLeague = (id: number) => {
+    setLocalBasketballLeagues(prev =>
+      prev.includes(id) ? prev.filter(l => l !== id) : [...prev, id]
+    );
+  };
+
   const hasFootball = localSports.includes('football');
+  const hasNba = localSports.includes('nba');
   const canFinish = localSports.length > 0 && (!hasFootball || localLeagues.length > 0);
 
   const handleDone = async () => {
-    await save({ sports: localSports, leagueIds: localLeagues, onboardingDone: true });
+    await save({ sports: localSports, leagueIds: localLeagues, basketballLeagueIds: localBasketballLeagues, onboardingDone: true });
     router.replace('/(tabs)/foryou');
   };
 
@@ -73,11 +82,11 @@ export default function OnboardingScreen() {
           })}
         </View>
 
-        {/* League picker — only if football selected */}
+        {/* Football league picker */}
         {hasFootball && (
           <View style={styles.leagueSection}>
             <Text style={styles.sectionLabel}>
-              Which leagues?{localLeagues.length === 0 ? '  ⚠️ Pick at least one' : ` · ${localLeagues.length} selected`}
+              Which football leagues?{localLeagues.length === 0 ? '  ⚠️ Pick at least one' : ` · ${localLeagues.length} selected`}
             </Text>
             <View style={styles.leagueGrid}>
               {SUPPORTED_LEAGUES.map(l => {
@@ -87,6 +96,28 @@ export default function OnboardingScreen() {
                     key={l.id}
                     style={[styles.leagueChip, active && styles.leagueChipActive]}
                     onPress={() => toggleLocalLeague(l.id)}
+                  >
+                    <Text style={styles.leagueEmoji}>{l.logo}</Text>
+                    <Text style={[styles.leagueName, active && styles.leagueNameActive]}>{l.name}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </View>
+        )}
+
+        {/* Basketball extra leagues — only if NBA selected */}
+        {hasNba && (
+          <View style={styles.leagueSection}>
+            <Text style={styles.sectionLabel}>More basketball? (optional)</Text>
+            <View style={styles.leagueGrid}>
+              {BASKETBALL_LEAGUES.map(l => {
+                const active = localBasketballLeagues.includes(l.id);
+                return (
+                  <TouchableOpacity
+                    key={l.id}
+                    style={[styles.leagueChip, active && styles.leagueChipActive]}
+                    onPress={() => toggleLocalBasketballLeague(l.id)}
                   >
                     <Text style={styles.leagueEmoji}>{l.logo}</Text>
                     <Text style={[styles.leagueName, active && styles.leagueNameActive]}>{l.name}</Text>

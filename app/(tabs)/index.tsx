@@ -12,6 +12,8 @@ import {
 } from 'react-native';
 import { getGamesByDates } from '../../src/api/balldontlie';
 import { getFootballGamesByDate, getStandings, SUPPORTED_LEAGUES, FootballGame, FootballLeague, StandingRow } from '../../src/api/apifootball';
+import { getBasketballGamesByDate, BASKETBALL_LEAGUES, BasketballGame, BasketballLeague } from '../../src/api/apibasketball';
+import { usePreferences } from '../../src/hooks/usePreferences';
 import { Game } from '../../src/types';
 import { GameCard } from '../../src/components/GameCard';
 
@@ -84,6 +86,61 @@ function FootballMatchCard({ game }: { game: FootballGame }) {
         </View>
         <View style={styles.fStatus}>
           <Text style={[styles.fStatusText, { color }, isLive && styles.fStatusLive]}>{isLive ? '● ' : ''}{label}</Text>
+        </View>
+        <View style={styles.fScores}>
+          {hasScore ? (
+            <>
+              <Text style={[styles.fScore, homeWin && styles.fScoreWinner, isLive && styles.fScoreLive]}>{game.homeScore}</Text>
+              <Text style={[styles.fScore, awayWin && styles.fScoreWinner, isLive && styles.fScoreLive]}>{game.awayScore}</Text>
+            </>
+          ) : (
+            <><Text style={styles.fScoreDash}>-</Text><Text style={styles.fScoreDash}>-</Text></>
+          )}
+        </View>
+      </View>
+    </View>
+  );
+}
+
+// ── Basketball match card (mirrors football card) ─────────────────────────
+function BasketballCard({ game }: { game: BasketballGame }) {
+  const isFinal = game.status === 'final';
+  const isLive = game.status === 'live';
+  const hasScore = game.homeScore !== null && game.awayScore !== null;
+  const homeWin = isFinal && hasScore && game.homeScore! > game.awayScore!;
+  const awayWin = isFinal && hasScore && game.awayScore! > game.homeScore!;
+  let timeLabel = '';
+  if (isLive) timeLabel = game.elapsed ?? 'LIVE';
+  else if (isFinal) timeLabel = 'FT';
+  else if (game.time) {
+    try {
+      const [h, m] = game.time.split(':');
+      const d = new Date(); d.setUTCHours(parseInt(h), parseInt(m));
+      timeLabel = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    } catch { timeLabel = game.time; }
+  }
+  return (
+    <View style={[styles.fCard, isLive && styles.fCardLive]}>
+      {isLive && <View style={styles.fLiveStripe} />}
+      <View style={styles.fInner}>
+        <View style={styles.fTeams}>
+          <View style={styles.fTeamRow}>
+            {game.homeTeam.logo
+              ? <Image source={{ uri: game.homeTeam.logo }} style={styles.fLogo} />
+              : <View style={[styles.fLogo, styles.fLogoPlaceholder]}><Text style={styles.fLogoText}>{game.homeTeam.name[0]}</Text></View>}
+            <Text style={[styles.fTeamName, homeWin && styles.fTeamWinner]} numberOfLines={1}>{game.homeTeam.name}</Text>
+          </View>
+          <View style={styles.fTeamRow}>
+            {game.awayTeam.logo
+              ? <Image source={{ uri: game.awayTeam.logo }} style={styles.fLogo} />
+              : <View style={[styles.fLogo, styles.fLogoPlaceholder]}><Text style={styles.fLogoText}>{game.awayTeam.name[0]}</Text></View>}
+            <Text style={[styles.fTeamName, awayWin && styles.fTeamWinner]} numberOfLines={1}>{game.awayTeam.name}</Text>
+          </View>
+        </View>
+        <View style={styles.fStatus}>
+          <Text style={[styles.fStatusText, { color: isLive ? '#ef4444' : isFinal ? '#4b5563' : '#9ca3af' }, isLive && styles.fStatusLive]}>
+            {isLive ? '● ' : ''}{timeLabel}
+          </Text>
         </View>
         <View style={styles.fScores}>
           {hasScore ? (
@@ -228,6 +285,7 @@ const FOOTBALL_DAYS = getFootballDays();
 const FOOTBALL_TODAY_INDEX = 7;
 
 export default function ScoresScreen() {
+  const { prefs } = usePreferences();
   const [sport, setSport] = useState<Sport>('nba');
   const [selectedDateIndex, setSelectedDateIndex] = useState(TODAY_INDEX);
   const [footballDateIndex, setFootballDateIndex] = useState(FOOTBALL_TODAY_INDEX);
@@ -237,6 +295,9 @@ export default function ScoresScreen() {
   const [nbaGames, setNbaGames] = useState<Game[]>([]);
   const [nbaLoading, setNbaLoading] = useState(true);
   const [nbaRefreshing, setNbaRefreshing] = useState(false);
+
+  // Extra basketball state
+  const [basketballGames, setBasketballGames] = useState<BasketballGame[]>([]);
 
   // Football state
   const [footballGames, setFootballGames] = useState<FootballGame[]>([]);
@@ -249,6 +310,7 @@ export default function ScoresScreen() {
   const footballRequestGen = useRef(0);
 
   const selectedDate = DATE_LIST[selectedDateIndex].iso;
+  const extraBasketballIds = prefs.basketballLeagueIds ?? [];
 
   // ── NBA loader ──
   const loadNba = useCallback(async (date: string, isRefresh = false) => {
@@ -264,6 +326,17 @@ export default function ScoresScreen() {
       if (gen !== nbaRequestGen.current) return;
       setNbaLoading(false);
       setNbaRefreshing(false);
+    }
+  }, []);
+
+  // ── Extra basketball loader ──
+  const loadExtraBasketball = useCallback(async (date: string, ids: number[]) => {
+    if (ids.length === 0) { setBasketballGames([]); return; }
+    try {
+      const games = await getBasketballGamesByDate(date, ids);
+      setBasketballGames(games);
+    } catch {
+      setBasketballGames([]);
     }
   }, []);
 
@@ -310,10 +383,16 @@ export default function ScoresScreen() {
   useEffect(() => {
     mountedRef.current = true;
     loadNba(selectedDate);
+    loadExtraBasketball(selectedDate, extraBasketballIds);
     setTimeout(() => {
       dateScrollRef.current?.scrollTo({ x: TODAY_INDEX * 66 - 100, animated: false });
     }, 100);
   }, []);
+
+  // Reload extra basketball when date or league prefs change
+  useEffect(() => {
+    if (mountedRef.current) loadExtraBasketball(selectedDate, extraBasketballIds);
+  }, [selectedDate, extraBasketballIds.join(',')]);
 
   // Auto-refresh live games every 60s
   useEffect(() => {
@@ -419,19 +498,52 @@ export default function ScoresScreen() {
         </>
       )}
 
-      {/* ── NBA Content ── */}
+      {/* ── NBA + Extra Basketball Content ── */}
       {sport === 'nba' && (
         nbaLoading ? (
           <View style={styles.center}><ActivityIndicator size="large" color="#f97316" /></View>
         ) : (
-          <FlatList
-            data={nbaGames}
-            keyExtractor={g => String(g.id)}
-            renderItem={({ item }) => <GameCard game={item} />}
+          <ScrollView
+            contentContainerStyle={{ paddingVertical: 8, paddingBottom: 40, flexGrow: 1 }}
             refreshControl={<RefreshControl refreshing={nbaRefreshing} onRefresh={() => { setNbaRefreshing(true); loadNba(selectedDate, true); }} tintColor="#f97316" />}
-            ListEmptyComponent={<View style={styles.center}><Text style={styles.emptyText}>No NBA games on this date</Text></View>}
-            contentContainerStyle={{ paddingVertical: 8, flexGrow: 1 }}
-          />
+          >
+            {/* NBA games */}
+            {nbaGames.length === 0 && basketballGames.length === 0 ? (
+              <View style={styles.center}><Text style={styles.emptyText}>No games on this date</Text></View>
+            ) : (
+              <>
+                {nbaGames.length > 0 && (
+                  <View style={styles.leagueSection}>
+                    <View style={styles.leagueHeader}>
+                      <Text style={styles.leagueHeaderEmoji}>🏀</Text>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.leagueHeaderName}>NBA</Text>
+                        <Text style={styles.leagueHeaderCountry}>USA</Text>
+                      </View>
+                    </View>
+                    {nbaGames.map(g => <GameCard key={g.id} game={g} />)}
+                  </View>
+                )}
+                {/* Extra basketball leagues */}
+                {BASKETBALL_LEAGUES.filter(l => extraBasketballIds.includes(l.id)).map(league => {
+                  const games = basketballGames.filter(g => g.leagueId === league.id);
+                  if (games.length === 0) return null;
+                  return (
+                    <View key={league.id} style={styles.leagueSection}>
+                      <View style={styles.leagueHeader}>
+                        <Text style={styles.leagueHeaderEmoji}>{league.logo}</Text>
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.leagueHeaderName}>{league.name}</Text>
+                          <Text style={styles.leagueHeaderCountry}>{league.country}</Text>
+                        </View>
+                      </View>
+                      {games.map(g => <BasketballCard key={g.id} game={g} />)}
+                    </View>
+                  );
+                })}
+              </>
+            )}
+          </ScrollView>
         )
       )}
 

@@ -1,20 +1,24 @@
 import { useState, useEffect, useCallback } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { SUPPORTED_LEAGUES } from '../api/apifootball';
+import { BASKETBALL_LEAGUES } from '../api/apibasketball';
 
 const VALID_LEAGUE_IDS = new Set(SUPPORTED_LEAGUES.map(l => l.id));
+const VALID_BASKETBALL_IDS = new Set(BASKETBALL_LEAGUES.map(l => l.id));
 
 export type SportPref = 'nba' | 'football';
 
 export interface UserPreferences {
   sports: SportPref[];
-  leagueIds: number[];      // football league IDs from apifootball
+  leagueIds: number[];            // football league IDs
+  basketballLeagueIds: number[];  // extra basketball league IDs (EuroLeague, etc.)
   onboardingDone: boolean;
 }
 
 const DEFAULT_PREFS: UserPreferences = {
   sports: [],
   leagueIds: [],
+  basketballLeagueIds: [],
   onboardingDone: false,
 };
 
@@ -29,9 +33,12 @@ export function usePreferences() {
       if (raw) {
         try {
           const parsed = JSON.parse(raw);
-          // Reset league IDs if they contain old API-Sports IDs
           if (parsed.leagueIds?.some((id: number) => !VALID_LEAGUE_IDS.has(id))) {
             parsed.leagueIds = [];
+          }
+          if (!parsed.basketballLeagueIds) parsed.basketballLeagueIds = [];
+          if (parsed.basketballLeagueIds?.some((id: number) => !VALID_BASKETBALL_IDS.has(id))) {
+            parsed.basketballLeagueIds = [];
           }
           setPrefs(parsed);
         } catch { /* ignore bad data */ }
@@ -59,6 +66,19 @@ export function usePreferences() {
     });
   }, []);
 
+  const toggleBasketballLeague = useCallback((id: number) => {
+    setPrefs(prev => {
+      const next = {
+        ...prev,
+        basketballLeagueIds: prev.basketballLeagueIds.includes(id)
+          ? prev.basketballLeagueIds.filter(l => l !== id)
+          : [...prev.basketballLeagueIds, id],
+      };
+      AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+      return next;
+    });
+  }, []);
+
   const toggleLeague = useCallback((id: number) => {
     setPrefs(prev => {
       const next = {
@@ -80,5 +100,5 @@ export function usePreferences() {
     });
   }, []);
 
-  return { prefs, loaded, save, toggleSport, toggleLeague, completeOnboarding };
+  return { prefs, loaded, save, toggleSport, toggleLeague, toggleBasketballLeague, completeOnboarding };
 }
