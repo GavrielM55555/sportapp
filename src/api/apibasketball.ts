@@ -4,6 +4,11 @@ const LEAGUE_SLUG: Record<number, string> = {
   6001: 'eur.1',    // EuroLeague
   6002: 'eurocup',  // EuroCup
   6003: 'nba.gl',   // G League
+  6004: 'nbl',      // Australia NBL
+  6005: 'acb',      // Spain ACB
+  6006: 'bbl',      // Germany BBL
+  6007: 'lnb',      // France Pro A
+  6008: 'ita.1',    // Italy Lega Basket
 };
 
 export interface BasketballLeague {
@@ -14,9 +19,14 @@ export interface BasketballLeague {
 }
 
 export const BASKETBALL_LEAGUES: BasketballLeague[] = [
-  { id: 6001, name: 'EuroLeague',  country: 'Europe', logo: '⭐' },
-  { id: 6002, name: 'EuroCup',     country: 'Europe', logo: '🏀' },
-  { id: 6003, name: 'G League',    country: 'USA',    logo: '🇺🇸' },
+  { id: 6001, name: 'EuroLeague',  country: 'Europe',    logo: '⭐' },
+  { id: 6002, name: 'EuroCup',     country: 'Europe',    logo: '🏀' },
+  { id: 6004, name: 'NBL',         country: 'Australia', logo: '🇦🇺' },
+  { id: 6005, name: 'ACB',         country: 'Spain',     logo: '🇪🇸' },
+  { id: 6006, name: 'BBL',         country: 'Germany',   logo: '🇩🇪' },
+  { id: 6007, name: 'Pro A',       country: 'France',    logo: '🇫🇷' },
+  { id: 6008, name: 'Lega Basket', country: 'Italy',     logo: '🇮🇹' },
+  { id: 6003, name: 'G League',    country: 'USA',       logo: '🇺🇸' },
 ];
 
 export interface BasketballGame {

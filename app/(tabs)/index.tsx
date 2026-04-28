@@ -285,13 +285,14 @@ const FOOTBALL_DAYS = getFootballDays();
 const FOOTBALL_TODAY_INDEX = 7;
 
 export default function ScoresScreen() {
-  const { prefs } = usePreferences();
+  const { prefs, toggleBasketballLeague } = usePreferences();
   const [sport, setSport] = useState<Sport>('nba');
   const [selectedDateIndex, setSelectedDateIndex] = useState(TODAY_INDEX);
   const [footballDateIndex, setFootballDateIndex] = useState(FOOTBALL_TODAY_INDEX);
   const [selectedLeagues, setSelectedLeagues] = useState<number[]>(ALL_LEAGUE_IDS);
 
   // NBA state
+  const [showNba, setShowNba] = useState(true);
   const [nbaGames, setNbaGames] = useState<Game[]>([]);
   const [nbaLoading, setNbaLoading] = useState(true);
   const [nbaRefreshing, setNbaRefreshing] = useState(false);
@@ -412,8 +413,6 @@ export default function ScoresScreen() {
     );
   };
 
-  const { toggleBasketballLeague } = usePreferences();
-
   const visibleFootball = footballGames.filter(g => selectedLeagues.includes(g.leagueId));
   const footballLiveCount = visibleFootball.filter(g => g.status === 'live').length;
   const groupedFootball = SUPPORTED_LEAGUES
@@ -440,14 +439,17 @@ export default function ScoresScreen() {
         </TouchableOpacity>
       </View>
 
-      {/* ── NBA: extra basketball league filter ── */}
-      {sport === 'nba' && BASKETBALL_LEAGUES.length > 0 && (
+      {/* ── NBA: basketball league filter ── */}
+      {sport === 'nba' && (
         <View style={styles.leagueBar}>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.leagueBarInner}>
-            <View style={[styles.leagueChip, styles.leagueChipNba]}>
+            <TouchableOpacity
+              style={[styles.leagueChip, showNba && styles.leagueChipActive]}
+              onPress={() => setShowNba(v => !v)}
+            >
               <Text style={styles.leagueChipEmoji}>🏀</Text>
-              <Text style={[styles.leagueChipText, styles.leagueChipTextActive]}>NBA</Text>
-            </View>
+              <Text style={[styles.leagueChipText, showNba && styles.leagueChipTextActive]}>NBA</Text>
+            </TouchableOpacity>
             {BASKETBALL_LEAGUES.map(l => {
               const active = extraBasketballIds.includes(l.id);
               return (
@@ -535,11 +537,11 @@ export default function ScoresScreen() {
             refreshControl={<RefreshControl refreshing={nbaRefreshing} onRefresh={() => { setNbaRefreshing(true); loadNba(selectedDate, true); }} tintColor="#f97316" />}
           >
             {/* NBA games */}
-            {nbaGames.length === 0 && basketballGames.length === 0 ? (
+            {(!showNba || nbaGames.length === 0) && basketballGames.length === 0 ? (
               <View style={styles.center}><Text style={styles.emptyText}>No games on this date</Text></View>
             ) : (
               <>
-                {nbaGames.length > 0 && (
+                {showNba && nbaGames.length > 0 && (
                   <View style={styles.leagueSection}>
                     <View style={styles.leagueHeader}>
                       <Text style={styles.leagueHeaderEmoji}>🏀</Text>
