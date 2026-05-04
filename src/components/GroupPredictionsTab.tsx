@@ -697,69 +697,6 @@ function PlayoffPredictions({ group }: { group: Group }) {
       </Modal>
 
 
-      {/* ── Round 2 OT Bonus ── */}
-      {rounds.length >= 2 && (() => {
-        const r2 = rounds[1];
-        const r2Started = r2.some(s => s.games.some(g => g.status !== 'scheduled'));
-        const r2Complete = r2.length === 4 && r2.every(s => s.isComplete);
-        const actualOt = r2Complete
-          ? r2.flatMap(s => s.games).filter(g => g.status === 'final' && g.isOT).length
-          : null;
-        const myOtPick = otPicks.find(p => p.uid === user?.uid);
-        return (
-          <View style={styles.bonusSection}>
-            <View style={styles.bonusHeader}>
-              <Text style={styles.bonusTitleText}>⏱️ Round 2 — OT Games</Text>
-              <Text style={styles.bonusSubText}>
-                {r2Complete
-                  ? `Round 2 finished — ${actualOt} OT game${actualOt !== 1 ? 's' : ''}`
-                  : r2Started
-                    ? 'Locked — Round 2 in progress'
-                    : 'How many games go to overtime? · 4 pts exact · Locks when Round 2 tips off'}
-              </Text>
-            </View>
-
-            {r2Started && otPicks.length > 0 && (
-              <View style={styles.bonusTable}>
-                {group.members.map(member => {
-                  const pick = otPicks.find(p => p.uid === member.uid);
-                  const correct = r2Complete && pick != null && pick.otGames === actualOt;
-                  return (
-                    <View key={member.uid} style={styles.bonusTableRow}>
-                      <Text style={[styles.bonusCol, { flex: 2, color: '#d1d5db', textAlign: 'left' }]}>{member.displayName}</Text>
-                      <Text style={[styles.bonusCol, { flex: 2, color: pick != null ? '#f97316' : '#4b5563' }]}>
-                        {pick != null ? `${pick.otGames} OT` : '–'}
-                      </Text>
-                      {r2Complete && (
-                        <Text style={[styles.bonusCol, { color: correct ? '#22c55e' : '#ef4444' }]}>
-                          {pick != null ? (correct ? '+4 pts' : '+0 pts') : '–'}
-                        </Text>
-                      )}
-                    </View>
-                  );
-                })}
-              </View>
-            )}
-
-            {!r2Started && (
-              <TouchableOpacity
-                style={styles.bonusBtn}
-                onPress={() => { setOtInput(myOtPick != null ? String(myOtPick.otGames) : '0'); setShowOtModal(true); }}
-              >
-                <Text style={styles.bonusBtnText}>
-                  {myOtPick != null ? `My pick: ${myOtPick.otGames} OT games · Change` : 'Make your pick'}
-                </Text>
-              </TouchableOpacity>
-            )}
-            {r2Started && myOtPick != null && !r2Complete && (
-              <Text style={[styles.bonusSubText, { paddingHorizontal: 0, paddingBottom: 4 }]}>
-                Your pick: <Text style={{ color: '#f97316', fontWeight: '700' }}>{myOtPick.otGames} OT games</Text>
-              </Text>
-            )}
-          </View>
-        );
-      })()}
-
       {/* ── Round 2 OT Modal ── */}
       <Modal visible={showOtModal} transparent animationType="slide">
         <View style={styles.modalOverlay}>
@@ -838,6 +775,66 @@ function PlayoffPredictions({ group }: { group: Group }) {
                 </View>
               </View>
             )}
+
+            {/* Round 2 OT bonus card — sits at top of Round 2 section */}
+            {roundIndex === 1 && (() => {
+              const r2Started = roundStarted;
+              const r2Complete = roundComplete;
+              const actualOt = r2Complete
+                ? roundSeries.flatMap(s => s.games).filter(g => g.status === 'final' && g.isOT).length
+                : null;
+              const myOtPick = otPicks.find(p => p.uid === user?.uid);
+              return (
+                <View style={styles.bonusSection}>
+                  <View style={styles.bonusHeader}>
+                    <Text style={styles.bonusTitleText}>⏱️ Round 2 — OT Games</Text>
+                    <Text style={styles.bonusSubText}>
+                      {r2Complete
+                        ? `Round 2 finished — ${actualOt} OT game${actualOt !== 1 ? 's' : ''}`
+                        : r2Started
+                          ? 'Locked — Round 2 in progress'
+                          : 'How many games go to overtime? · 4 pts exact · Locks when Round 2 tips off'}
+                    </Text>
+                  </View>
+                  {r2Started && otPicks.length > 0 && (
+                    <View style={styles.bonusTable}>
+                      {group.members.map(member => {
+                        const pick = otPicks.find(p => p.uid === member.uid);
+                        const correct = r2Complete && pick != null && pick.otGames === actualOt;
+                        return (
+                          <View key={member.uid} style={styles.bonusTableRow}>
+                            <Text style={[styles.bonusCol, { flex: 2, color: '#d1d5db', textAlign: 'left' }]}>{member.displayName}</Text>
+                            <Text style={[styles.bonusCol, { flex: 2, color: pick != null ? '#f97316' : '#4b5563' }]}>
+                              {pick != null ? `${pick.otGames} OT` : '–'}
+                            </Text>
+                            {r2Complete && (
+                              <Text style={[styles.bonusCol, { color: correct ? '#22c55e' : '#ef4444' }]}>
+                                {pick != null ? (correct ? '+4 pts' : '+0 pts') : '–'}
+                              </Text>
+                            )}
+                          </View>
+                        );
+                      })}
+                    </View>
+                  )}
+                  {!r2Started && (
+                    <TouchableOpacity
+                      style={styles.bonusBtn}
+                      onPress={() => { setOtInput(myOtPick != null ? String(myOtPick.otGames) : '0'); setShowOtModal(true); }}
+                    >
+                      <Text style={styles.bonusBtnText}>
+                        {myOtPick != null ? `My pick: ${myOtPick.otGames} OT games · Change` : 'Make your pick'}
+                      </Text>
+                    </TouchableOpacity>
+                  )}
+                  {r2Started && myOtPick != null && !r2Complete && (
+                    <Text style={[styles.bonusSubText, { paddingHorizontal: 0, paddingBottom: 4 }]}>
+                      Your pick: <Text style={{ color: '#f97316', fontWeight: '700' }}>{myOtPick.otGames} OT games</Text>
+                    </Text>
+                  )}
+                </View>
+              );
+            })()}
 
             {/* Series cards */}
             {roundSeries.map(s => {
