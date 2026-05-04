@@ -733,7 +733,8 @@ function PlayoffPredictions({ group }: { group: Group }) {
         </View>
       </Modal>
 
-      {rounds.map((roundSeries, roundIndex) => {
+      {[...rounds].reverse().map((roundSeries, displayIndex) => {
+        const roundIndex = rounds.length - 1 - displayIndex;
         const label = ROUND_LABELS[roundIndex] ?? `Round ${roundIndex + 1}`;
 
         // Round is locked the moment ANY game in it is no longer scheduled
