@@ -409,6 +409,12 @@ function PlayoffPredictions({ group }: { group: Group }) {
   const [showChampModal, setShowChampModal] = useState(false);
   const [savingChamp, setSavingChamp] = useState(false);
 
+  // Round 2 OT bonus state
+  const [otPicks, setOtPicks] = useState<{ id: string; uid: string; otGames: number; pointsEarned?: number }[]>([]);
+  const [showOtModal, setShowOtModal] = useState(false);
+  const [otInput, setOtInput] = useState('0');
+  const [savingOt, setSavingOt] = useState(false);
+
   const silentReload = React.useCallback(async () => {
     if (!user) return;
     try {
@@ -476,6 +482,41 @@ function PlayoffPredictions({ group }: { group: Group }) {
           where('groupId', '==', group.id)
         ));
         setChampPicks(champSnap.docs.map(d => d.data() as { uid: string; teamId: number; teamAbbr: string }));
+
+        // Load Round 2 OT picks
+        const otSnap = await getDocs(query(
+          collection(db, 'playoff_bonus_picks'),
+          where('groupId', '==', group.id)
+        ));
+        const fetchedOtPicks = otSnap.docs.map(d => ({ id: d.id, ...d.data() } as { id: string; uid: string; otGames: number; pointsEarned?: number }));
+        setOtPicks(fetchedOtPicks);
+
+        // Auto-score Round 2 OT bonus when Round 2 is complete
+        const r2 = detectRounds(grouped)[1] ?? [];
+        const r2Complete = r2.length === 4 && r2.every(s => s.isComplete);
+        if (r2Complete) {
+          const actualOt = r2.flatMap(s => s.games).filter(g => g.status === 'final' && g.isOT).length;
+          const unscoredOt = fetchedOtPicks.filter(p => p.pointsEarned === undefined);
+          if (unscoredOt.length > 0) {
+            const otBatch = writeBatch(db);
+            const deltaByUid = new Map<string, number>();
+            for (const pick of unscoredOt) {
+              const pts = pick.otGames === actualOt ? 4 : 0;
+              otBatch.update(doc(db, 'playoff_bonus_picks', pick.id), { pointsEarned: pts });
+              if (pts > 0) deltaByUid.set(pick.uid, (deltaByUid.get(pick.uid) ?? 0) + pts);
+            }
+            if (deltaByUid.size > 0) {
+              const updatedMems = group.members.map(m => ({
+                ...m,
+                totalPoints: (m.totalPoints ?? 0) + (deltaByUid.get(m.uid) ?? 0),
+              }));
+              otBatch.update(doc(db, 'groups', group.id), { members: updatedMems });
+            }
+            await otBatch.commit();
+            const rescored = await getDocs(query(collection(db, 'playoff_bonus_picks'), where('groupId', '==', group.id)));
+            setOtPicks(rescored.docs.map(d => ({ id: d.id, ...d.data() } as { id: string; uid: string; otGames: number; pointsEarned?: number })));
+          }
+        }
       } catch (e: any) {
         console.error('[PlayoffPredictions] load error:', e);
         setError(e?.message?.includes('429')
@@ -537,6 +578,30 @@ function PlayoffPredictions({ group }: { group: Group }) {
     }
   };
 
+
+  const saveOtPick = async () => {
+    if (!user) return;
+    setSavingOt(true);
+    try {
+      const val = Math.max(0, parseInt(otInput) || 0);
+      const pick = { uid: user.uid, groupId: group.id, season: String(currentNBASeason()), otGames: val, submittedAt: Date.now() };
+      const existing = await getDocs(query(
+        collection(db, 'playoff_bonus_picks'),
+        where('uid', '==', user.uid),
+        where('groupId', '==', group.id)
+      ));
+      if (!existing.empty) {
+        await updateDoc(doc(db, 'playoff_bonus_picks', existing.docs[0].id), pick);
+      } else {
+        await addDoc(collection(db, 'playoff_bonus_picks'), pick);
+      }
+      const snap = await getDocs(query(collection(db, 'playoff_bonus_picks'), where('groupId', '==', group.id)));
+      setOtPicks(snap.docs.map(d => ({ id: d.id, ...d.data() } as { id: string; uid: string; otGames: number; pointsEarned?: number })));
+      setShowOtModal(false);
+    } finally {
+      setSavingOt(false);
+    }
+  };
 
   return (
     <ScrollView contentContainerStyle={{ paddingBottom: 40 }}>
@@ -631,6 +696,105 @@ function PlayoffPredictions({ group }: { group: Group }) {
         </View>
       </Modal>
 
+
+      {/* ── Round 2 OT Bonus ── */}
+      {rounds.length >= 2 && (() => {
+        const r2 = rounds[1];
+        const r2Started = r2.some(s => s.games.some(g => g.status !== 'scheduled'));
+        const r2Complete = r2.length === 4 && r2.every(s => s.isComplete);
+        const actualOt = r2Complete
+          ? r2.flatMap(s => s.games).filter(g => g.status === 'final' && g.isOT).length
+          : null;
+        const myOtPick = otPicks.find(p => p.uid === user?.uid);
+        return (
+          <View style={styles.bonusSection}>
+            <View style={styles.bonusHeader}>
+              <Text style={styles.bonusTitleText}>⏱️ Round 2 — OT Games</Text>
+              <Text style={styles.bonusSubText}>
+                {r2Complete
+                  ? `Round 2 finished — ${actualOt} OT game${actualOt !== 1 ? 's' : ''}`
+                  : r2Started
+                    ? 'Locked — Round 2 in progress'
+                    : 'How many games go to overtime? · 4 pts exact · Locks when Round 2 tips off'}
+              </Text>
+            </View>
+
+            {r2Started && otPicks.length > 0 && (
+              <View style={styles.bonusTable}>
+                {group.members.map(member => {
+                  const pick = otPicks.find(p => p.uid === member.uid);
+                  const correct = r2Complete && pick != null && pick.otGames === actualOt;
+                  return (
+                    <View key={member.uid} style={styles.bonusTableRow}>
+                      <Text style={[styles.bonusCol, { flex: 2, color: '#d1d5db', textAlign: 'left' }]}>{member.displayName}</Text>
+                      <Text style={[styles.bonusCol, { flex: 2, color: pick != null ? '#f97316' : '#4b5563' }]}>
+                        {pick != null ? `${pick.otGames} OT` : '–'}
+                      </Text>
+                      {r2Complete && (
+                        <Text style={[styles.bonusCol, { color: correct ? '#22c55e' : '#ef4444' }]}>
+                          {pick != null ? (correct ? '+4 pts' : '+0 pts') : '–'}
+                        </Text>
+                      )}
+                    </View>
+                  );
+                })}
+              </View>
+            )}
+
+            {!r2Started && (
+              <TouchableOpacity
+                style={styles.bonusBtn}
+                onPress={() => { setOtInput(myOtPick != null ? String(myOtPick.otGames) : '0'); setShowOtModal(true); }}
+              >
+                <Text style={styles.bonusBtnText}>
+                  {myOtPick != null ? `My pick: ${myOtPick.otGames} OT games · Change` : 'Make your pick'}
+                </Text>
+              </TouchableOpacity>
+            )}
+            {r2Started && myOtPick != null && !r2Complete && (
+              <Text style={[styles.bonusSubText, { paddingHorizontal: 0, paddingBottom: 4 }]}>
+                Your pick: <Text style={{ color: '#f97316', fontWeight: '700' }}>{myOtPick.otGames} OT games</Text>
+              </Text>
+            )}
+          </View>
+        );
+      })()}
+
+      {/* ── Round 2 OT Modal ── */}
+      <Modal visible={showOtModal} transparent animationType="slide">
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalBox}>
+            <Text style={styles.modalTitle}>⏱️ Round 2 OT Games</Text>
+            <Text style={styles.modalSubtitle}>How many games in Round 2 will go to overtime?</Text>
+            <Text style={[styles.modalSubtitle, { marginTop: 4 }]}>Exact answer = 4 pts · Locks when Round 2 tips off</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 24, marginVertical: 24 }}>
+              <TouchableOpacity
+                style={{ backgroundColor: '#1e2d3d', width: 48, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center' }}
+                onPress={() => setOtInput(v => String(Math.max(0, parseInt(v) - 1)))}
+              >
+                <Text style={{ color: '#fff', fontSize: 28, fontWeight: '300', lineHeight: 32 }}>−</Text>
+              </TouchableOpacity>
+              <Text style={{ color: '#fff', fontSize: 40, fontWeight: '800', minWidth: 52, textAlign: 'center' }}>{otInput}</Text>
+              <TouchableOpacity
+                style={{ backgroundColor: '#1e2d3d', width: 48, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center' }}
+                onPress={() => setOtInput(v => String(parseInt(v) + 1))}
+              >
+                <Text style={{ color: '#fff', fontSize: 28, fontWeight: '300', lineHeight: 32 }}>+</Text>
+              </TouchableOpacity>
+            </View>
+            <TouchableOpacity
+              style={[styles.modalBtn, { backgroundColor: '#8b5cf6' }, savingOt && { opacity: 0.5 }]}
+              onPress={saveOtPick}
+              disabled={savingOt}
+            >
+              <Text style={{ color: '#fff', fontWeight: '800', fontSize: 15 }}>{savingOt ? 'Saving...' : 'Lock In Pick'}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={[styles.modalBtn, { backgroundColor: '#1e2d3d', marginTop: 8 }]} onPress={() => setShowOtModal(false)}>
+              <Text style={{ color: '#9ca3af', fontWeight: '700' }}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
 
       {rounds.map((roundSeries, roundIndex) => {
         const label = ROUND_LABELS[roundIndex] ?? `Round ${roundIndex + 1}`;
