@@ -58,7 +58,16 @@ function mapGame(raw: any): Game {
     if (s.includes('T') && s.includes('Z')) {
       // ISO timestamp → convert to local time string
       try {
-        gameTime = new Date(s).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+        const d = new Date(s);
+        const localDateStr = d.toLocaleDateString('en-CA'); // YYYY-MM-DD in device tz
+        if (localDateStr !== raw.date) {
+          // Game crosses midnight locally — prefix with weekday so user knows it's a different day
+          const weekday = d.toLocaleDateString('en-US', { weekday: 'short' });
+          const timeStr = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+          gameTime = `${weekday} ${timeStr}`;
+        } else {
+          gameTime = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+        }
       } catch { gameTime = s; }
     } else if (s.length > 0) {
       gameTime = s;
@@ -66,7 +75,6 @@ function mapGame(raw: any): Game {
       gameTime = raw.time ?? undefined;
     }
   }
-
 
   return {
     id: raw.id,
@@ -76,7 +84,7 @@ function mapGame(raw: any): Game {
     homeScore: raw.home_team_score ?? null,
     awayScore: raw.visitor_team_score ?? null,
     status,
-    isOT: s === 'Final/OT',
+    isOT: s === 'Final/OT' || (isFinal && (raw.period ?? 0) > 4),
     period: raw.period || undefined,
     time: gameTime,
     playoffs: raw.postseason ?? false,
@@ -121,17 +129,15 @@ async function prewarm() {
 }
 
 /** Get games for specific dates.
- *  Converts local dates to ET, fetches from cache (prewarmed on first call).
+ *  Fetches from cache (prewarmed on first call).
  *  Pass forceRefresh=true to bypass cache and fetch fresh (used for live score updates). */
 export async function getGamesByDates(dates: string[], forceRefresh = false): Promise<Game[]> {
   await prewarm();
   const sorted = [...dates].sort();
-  const etDates = sorted.map(d => toET(new Date(d + 'T12:00:00')));
-  const start = etDates[0];
-  const end = etDates[etDates.length - 1];
+  const start = sorted[0];
+  const end = sorted[sorted.length - 1];
 
   if (forceRefresh) {
-    // Fetch just this date range directly (1 API call), then patch the prewarm cache
     const data = await get<{ data: any[] }>('/games', { start_date: start, end_date: end, per_page: 100 });
     const freshGames = data.data.map(mapGame);
     const prewarmKey = (() => {
@@ -142,7 +148,6 @@ export async function getGamesByDates(dates: string[], forceRefresh = false): Pr
     })();
     const cached = rangeCache.get(prewarmKey);
     if (cached) {
-      // Replace today's games in the cached range with fresh data
       const merged = cached.games.filter(g => g.date < start || g.date > end).concat(freshGames);
       rangeCache.set(prewarmKey, { games: merged, ts: cached.ts });
     }
@@ -160,7 +165,8 @@ export async function getGamesByDates(dates: string[], forceRefresh = false): Pr
   if (cached) {
     return cached.games.filter(g => g.date >= start && g.date <= end);
   }
-  return fetchRange(start, end);
+  const games = await fetchRange(start, end);
+  return games.filter(g => g.date >= start && g.date <= end);
 }
 
 /** Get today's games */

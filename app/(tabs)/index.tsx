@@ -115,8 +115,13 @@ function BasketballCard({ game }: { game: BasketballGame }) {
   else if (game.time) {
     try {
       const [h, m] = game.time.split(':');
-      const d = new Date(); d.setUTCHours(parseInt(h), parseInt(m));
-      timeLabel = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      const hNum = parseInt(h), mNum = parseInt(m);
+      if (isNaN(hNum) || isNaN(mNum)) {
+        timeLabel = game.time; // already a formatted local string (e.g. from NBA)
+      } else {
+        const d = new Date(); d.setUTCHours(hNum, mNum);
+        timeLabel = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      }
     } catch { timeLabel = game.time; }
   }
   return (
@@ -647,8 +652,8 @@ export default function ScoresScreen() {
                       time: g.time ?? '',
                       homeTeam: { id: g.homeTeam.id, name: `${g.homeTeam.city} ${g.homeTeam.name}`, shortName: g.homeTeam.abbreviation, logo: '' },
                       awayTeam: { id: g.awayTeam.id, name: `${g.awayTeam.city} ${g.awayTeam.name}`, shortName: g.awayTeam.abbreviation, logo: '' },
-                      homeScore: g.homeScore,
-                      awayScore: g.awayScore,
+                      homeScore: g.status !== 'scheduled' ? g.homeScore : null,
+                      awayScore: g.status !== 'scheduled' ? g.awayScore : null,
                       status: g.status,
                       statusDetail: '',
                     }))}

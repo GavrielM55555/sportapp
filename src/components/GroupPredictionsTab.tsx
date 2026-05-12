@@ -495,9 +495,13 @@ function PlayoffPredictions({ group }: { group: Group }) {
         const r2 = detectRounds(grouped)[1] ?? [];
         const r2Complete = r2.length === 4 && r2.every(s => s.isComplete);
         if (r2Complete) {
-          const actualOt = r2.flatMap(s => s.games).filter(g => g.status === 'final' && g.isOT).length;
           const unscoredOt = fetchedOtPicks.filter(p => p.pointsEarned === undefined);
           if (unscoredOt.length > 0) {
+            // Force fresh data so isOT flags are current (avoids stale-cache mis-scoring)
+            playoffCache.clear();
+            const freshGames = await getPlayoffGames(currentNBASeason());
+            const freshR2 = (detectRounds(groupIntoSeries(freshGames).filter(s => s.games.length >= 2))[1] ?? []);
+            const actualOt = freshR2.flatMap(s => s.games).filter(g => g.status === 'final' && g.isOT).length;
             const otBatch = writeBatch(db);
             const deltaByUid = new Map<string, number>();
             for (const pick of unscoredOt) {
