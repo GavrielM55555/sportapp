@@ -957,7 +957,7 @@ function calcFootballPoints(pred: FootballPrediction, game: FootballGame): numbe
   if (pred.predictedResult === actual) pts += 2;
   if (pred.predictedHomeScore !== undefined && pred.predictedAwayScore !== undefined) {
     if (pred.predictedHomeScore === game.homeScore && pred.predictedAwayScore === game.awayScore) {
-      pts += 5;
+      pts += 3;
     }
   }
   return pts;
@@ -1149,7 +1149,7 @@ function FootballPredictions({ group }: { group: Group }) {
 
       {/* ── Scoring info ── */}
       <View style={styles.scoringInfo}>
-        <Text style={styles.scoringInfoText}>📊 Scoring: Correct result = 2 pts · Exact score = +5 pts</Text>
+        <Text style={styles.scoringInfoText}>📊 Scoring: Correct result = 2 pts · Exact score = +3 pts</Text>
       </View>
 
       {leagueGroups.map(({ league, upcoming, live, final: finished }) => (
@@ -1336,7 +1336,7 @@ function PredictFootballModal({
           <View style={styles.pointsGuide}>
             <Text style={styles.pointsTitle}>Points you can earn:</Text>
             <Text style={styles.pointsRow}>✓ Correct result (W/D/L) → 2 pts</Text>
-            <Text style={styles.pointsRow}>✓ Exact score → +5 pts</Text>
+            <Text style={styles.pointsRow}>✓ Exact score → +3 pts</Text>
           </View>
 
           <TouchableOpacity
