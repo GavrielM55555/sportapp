@@ -401,7 +401,7 @@ function PlayoffPredictions({ group }: { group: Group }) {
   const { user } = useAuthContext();
   const [allSeries, setAllSeries] = useState<PlayoffSeries[]>([]);
   const [allPredictions, setAllPredictions] = useState<SeriesPrediction[]>([]);
-  const [champPicks, setChampPicks] = useState<{ uid: string; teamId: number; teamAbbr: string }[]>([]);
+  const [champPicks, setChampPicks] = useState<{ id: string; uid: string; teamId: number; teamAbbr: string; pointsEarned?: number }[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedSeries, setSelectedSeries] = useState<PlayoffSeries | null>(null);
@@ -490,7 +490,35 @@ function PlayoffPredictions({ group }: { group: Group }) {
           collection(db, 'championship_picks'),
           where('groupId', '==', group.id)
         ));
-        setChampPicks(champSnap.docs.map(d => d.data() as { uid: string; teamId: number; teamAbbr: string }));
+        const fetchedChampPicks = champSnap.docs.map(d => ({ id: d.id, ...d.data() } as { id: string; uid: string; teamId: number; teamAbbr: string; pointsEarned?: number }));
+        setChampPicks(fetchedChampPicks);
+
+        // Auto-score championship picks when NBA Finals series is complete
+        const champRounds = detectRounds(grouped);
+        const finalsSeries = champRounds[3]?.[0];
+        const champion = finalsSeries?.isComplete ? finalsSeries.winner : undefined;
+        if (champion) {
+          const unscoredChamp = fetchedChampPicks.filter(p => p.pointsEarned === undefined);
+          if (unscoredChamp.length > 0) {
+            const champBatch = writeBatch(db);
+            const champDeltaByUid = new Map<string, number>();
+            for (const pick of unscoredChamp) {
+              const pts = pick.teamId === champion.id ? (CHAMP_POINTS[pick.teamAbbr] ?? 5) : 0;
+              champBatch.update(doc(db, 'championship_picks', pick.id), { pointsEarned: pts });
+              if (pts > 0) champDeltaByUid.set(pick.uid, (champDeltaByUid.get(pick.uid) ?? 0) + pts);
+            }
+            if (champDeltaByUid.size > 0) {
+              const updatedMems = group.members.map(m => ({
+                ...m,
+                totalPoints: (m.totalPoints ?? 0) + (champDeltaByUid.get(m.uid) ?? 0),
+              }));
+              champBatch.update(doc(db, 'groups', group.id), { members: updatedMems });
+            }
+            await champBatch.commit();
+            const rescoredChamp = await getDocs(query(collection(db, 'championship_picks'), where('groupId', '==', group.id)));
+            setChampPicks(rescoredChamp.docs.map(d => ({ id: d.id, ...d.data() } as { id: string; uid: string; teamId: number; teamAbbr: string; pointsEarned?: number })));
+          }
+        }
 
         // Load Round 2 OT picks
         const otSnap = await getDocs(query(
@@ -533,6 +561,30 @@ function PlayoffPredictions({ group }: { group: Group }) {
             await otBatch.commit();
             const rescored = await getDocs(query(collection(db, 'playoff_bonus_picks'), where('groupId', '==', group.id)));
             setOtPicks(rescored.docs.map(d => ({ id: d.id, ...d.data() } as { id: string; uid: string; otGames: number; pointsEarned?: number })));
+          }
+
+          // Fix any picks with corrupt pointsEarned values (1 or 2) from the brief scoring confusion
+          const wrongOt = fetchedOtPicks.filter(p => p.pointsEarned !== undefined && p.pointsEarned !== 0 && p.pointsEarned !== 4);
+          if (wrongOt.length > 0) {
+            const ACTUAL_R2_OT = 1;
+            const fixBatch = writeBatch(db);
+            const fixDeltaByUid = new Map<string, number>();
+            for (const pick of wrongOt) {
+              const correctPts = pick.otGames === ACTUAL_R2_OT ? 4 : 0;
+              const delta = correctPts - pick.pointsEarned!;
+              fixBatch.update(doc(db, 'playoff_bonus_picks', pick.id), { pointsEarned: correctPts });
+              if (delta !== 0) fixDeltaByUid.set(pick.uid, (fixDeltaByUid.get(pick.uid) ?? 0) + delta);
+            }
+            if (fixDeltaByUid.size > 0) {
+              const updatedMems = group.members.map(m => ({
+                ...m,
+                totalPoints: (m.totalPoints ?? 0) + (fixDeltaByUid.get(m.uid) ?? 0),
+              }));
+              fixBatch.update(doc(db, 'groups', group.id), { members: updatedMems });
+            }
+            await fixBatch.commit();
+            const fixRescored = await getDocs(query(collection(db, 'playoff_bonus_picks'), where('groupId', '==', group.id)));
+            setOtPicks(fixRescored.docs.map(d => ({ id: d.id, ...d.data() } as { id: string; uid: string; otGames: number; pointsEarned?: number })));
           }
         }
       } catch (e: any) {
@@ -589,7 +641,7 @@ function PlayoffPredictions({ group }: { group: Group }) {
         await addDoc(collection(db, 'championship_picks'), pick);
       }
       const snap = await getDocs(query(collection(db, 'championship_picks'), where('groupId', '==', group.id)));
-      setChampPicks(snap.docs.map(d => d.data() as { uid: string; teamId: number; teamAbbr: string }));
+      setChampPicks(snap.docs.map(d => ({ id: d.id, ...d.data() } as { id: string; uid: string; teamId: number; teamAbbr: string; pointsEarned?: number })));
       setShowChampModal(false);
     } finally {
       setSavingChamp(false);
@@ -710,10 +762,15 @@ function PlayoffPredictions({ group }: { group: Group }) {
                       <Text style={[styles.bonusCol, { flex: 2, color: pick ? '#f97316' : '#4b5563' }]}>
                         {pick ? pick.teamAbbr : '–'}
                       </Text>
-                      {champion && (
+                      {champion && pick && (
                         <Text style={[styles.bonusCol, { color: correct ? '#22c55e' : '#ef4444' }]}>
-                          {correct ? `+${CHAMP_POINTS[pick!.teamAbbr] ?? 5} pts` : '+0 pts'}
+                          {pick.pointsEarned !== undefined
+                            ? `+${pick.pointsEarned} pts`
+                            : correct ? `+${CHAMP_POINTS[pick.teamAbbr] ?? 5} pts` : '+0 pts'}
                         </Text>
+                      )}
+                      {champion && !pick && (
+                        <Text style={[styles.bonusCol, { color: '#4b5563' }]}>–</Text>
                       )}
                     </View>
                   );
