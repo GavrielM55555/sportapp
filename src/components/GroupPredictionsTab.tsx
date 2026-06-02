@@ -424,6 +424,15 @@ function PlayoffPredictions({ group }: { group: Group }) {
   const [r3ActualInput, setR3ActualInput] = useState('1');
   const [savingR3Score, setSavingR3Score] = useState(false);
 
+  // Round 4 (Finals) Wemby blocks bonus state
+  const [r4Picks, setR4Picks] = useState<{ id: string; uid: string; wembyBlocks: number; pointsEarned?: number }[]>([]);
+  const [showR4Modal, setShowR4Modal] = useState(false);
+  const [r4Input, setR4Input] = useState('');
+  const [savingR4, setSavingR4] = useState(false);
+  const [showR4ScoreModal, setShowR4ScoreModal] = useState(false);
+  const [r4ActualInput, setR4ActualInput] = useState('');
+  const [savingR4Score, setSavingR4Score] = useState(false);
+
   const silentReload = React.useCallback(async () => {
     if (!user) return;
     try {
@@ -533,24 +542,36 @@ function PlayoffPredictions({ group }: { group: Group }) {
         const fetchedR3Picks = r3Snap.docs.map(d => ({ id: d.id, ...d.data() } as { id: string; uid: string; pointDiff: number; pointsEarned?: number }));
         setR3Picks(fetchedR3Picks);
 
-        // Auto-score Round 2 OT bonus when Round 2 is complete
+        // Load Round 4 (Finals) Wemby blocks picks
+        const r4Snap = await getDocs(query(collection(db, 'playoff_r4_bonus_picks'), where('groupId', '==', group.id)));
+        const fetchedR4Picks = r4Snap.docs.map(d => ({ id: d.id, ...d.data() } as { id: string; uid: string; wembyBlocks: number; pointsEarned?: number }));
+        setR4Picks(fetchedR4Picks);
+
+        // Auto-score and fix Round 2 OT bonus when Round 2 is complete
         const r2 = detectRounds(grouped)[1] ?? [];
         const r2Complete = r2.length === 4 && r2.every(s => s.isComplete);
         if (r2Complete) {
+          const ACTUAL_R2_OT = 1; // CLE vs DET Game 5 confirmed only OT game in R2
           const unscoredOt = fetchedOtPicks.filter(p => p.pointsEarned === undefined);
-          if (unscoredOt.length > 0) {
-            // Force fresh data so isOT flags are current (avoids stale-cache mis-scoring)
-            playoffCache.clear();
-            const freshGames = await getPlayoffGames(currentNBASeason());
-            const freshR2 = (detectRounds(groupIntoSeries(freshGames).filter(s => s.games.length >= 2))[1] ?? []);
-            const actualOt = freshR2.flatMap(s => s.games).filter(g => g.status === 'final' && g.isOT).length;
+          const wrongOt = fetchedOtPicks.filter(p => p.pointsEarned !== undefined && p.pointsEarned !== 0 && p.pointsEarned !== 4);
+
+          if (unscoredOt.length > 0 || wrongOt.length > 0) {
             const otBatch = writeBatch(db);
             const deltaByUid = new Map<string, number>();
+
             for (const pick of unscoredOt) {
-              const pts = pick.otGames === actualOt ? 4 : 0;
+              const pts = pick.otGames === ACTUAL_R2_OT ? 4 : 0;
               otBatch.update(doc(db, 'playoff_bonus_picks', pick.id), { pointsEarned: pts });
               if (pts > 0) deltaByUid.set(pick.uid, (deltaByUid.get(pick.uid) ?? 0) + pts);
             }
+
+            for (const pick of wrongOt) {
+              const correctPts = pick.otGames === ACTUAL_R2_OT ? 4 : 0;
+              const delta = correctPts - pick.pointsEarned!;
+              otBatch.update(doc(db, 'playoff_bonus_picks', pick.id), { pointsEarned: correctPts });
+              if (delta !== 0) deltaByUid.set(pick.uid, (deltaByUid.get(pick.uid) ?? 0) + delta);
+            }
+
             if (deltaByUid.size > 0) {
               const updatedMems = group.members.map(m => ({
                 ...m,
@@ -558,33 +579,10 @@ function PlayoffPredictions({ group }: { group: Group }) {
               }));
               otBatch.update(doc(db, 'groups', group.id), { members: updatedMems });
             }
+
             await otBatch.commit();
             const rescored = await getDocs(query(collection(db, 'playoff_bonus_picks'), where('groupId', '==', group.id)));
             setOtPicks(rescored.docs.map(d => ({ id: d.id, ...d.data() } as { id: string; uid: string; otGames: number; pointsEarned?: number })));
-          }
-
-          // Fix any picks with corrupt pointsEarned values (1 or 2) from the brief scoring confusion
-          const wrongOt = fetchedOtPicks.filter(p => p.pointsEarned !== undefined && p.pointsEarned !== 0 && p.pointsEarned !== 4);
-          if (wrongOt.length > 0) {
-            const ACTUAL_R2_OT = 1;
-            const fixBatch = writeBatch(db);
-            const fixDeltaByUid = new Map<string, number>();
-            for (const pick of wrongOt) {
-              const correctPts = pick.otGames === ACTUAL_R2_OT ? 4 : 0;
-              const delta = correctPts - pick.pointsEarned!;
-              fixBatch.update(doc(db, 'playoff_bonus_picks', pick.id), { pointsEarned: correctPts });
-              if (delta !== 0) fixDeltaByUid.set(pick.uid, (fixDeltaByUid.get(pick.uid) ?? 0) + delta);
-            }
-            if (fixDeltaByUid.size > 0) {
-              const updatedMems = group.members.map(m => ({
-                ...m,
-                totalPoints: (m.totalPoints ?? 0) + (fixDeltaByUid.get(m.uid) ?? 0),
-              }));
-              fixBatch.update(doc(db, 'groups', group.id), { members: updatedMems });
-            }
-            await fixBatch.commit();
-            const fixRescored = await getDocs(query(collection(db, 'playoff_bonus_picks'), where('groupId', '==', group.id)));
-            setOtPicks(fixRescored.docs.map(d => ({ id: d.id, ...d.data() } as { id: string; uid: string; otGames: number; pointsEarned?: number })));
           }
         }
       } catch (e: any) {
@@ -690,6 +688,56 @@ function PlayoffPredictions({ group }: { group: Group }) {
       setShowR3Modal(false);
     } finally {
       setSavingR3(false);
+    }
+  };
+
+  const saveR4Pick = async () => {
+    if (!user) return;
+    setSavingR4(true);
+    try {
+      const val = Math.max(0, parseInt(r4Input) || 0);
+      const pick = { uid: user.uid, groupId: group.id, season: String(currentNBASeason()), wembyBlocks: val, submittedAt: Date.now() };
+      const existing = await getDocs(query(collection(db, 'playoff_r4_bonus_picks'), where('uid', '==', user.uid), where('groupId', '==', group.id)));
+      if (!existing.empty) {
+        await updateDoc(doc(db, 'playoff_r4_bonus_picks', existing.docs[0].id), pick);
+      } else {
+        await addDoc(collection(db, 'playoff_r4_bonus_picks'), pick);
+      }
+      const snap = await getDocs(query(collection(db, 'playoff_r4_bonus_picks'), where('groupId', '==', group.id)));
+      setR4Picks(snap.docs.map(d => ({ id: d.id, ...d.data() } as { id: string; uid: string; wembyBlocks: number; pointsEarned?: number })));
+      setShowR4Modal(false);
+    } finally {
+      setSavingR4(false);
+    }
+  };
+
+  const scoreR4Bonus = async () => {
+    setSavingR4Score(true);
+    try {
+      const actualBlocks = Math.max(0, parseInt(r4ActualInput) || 0);
+      const unscored = r4Picks.filter(p => p.pointsEarned === undefined);
+      if (unscored.length > 0) {
+        const batch = writeBatch(db);
+        const deltaByUid = new Map<string, number>();
+        for (const pick of unscored) {
+          const pts = pick.wembyBlocks === actualBlocks ? 4 : 0;
+          batch.update(doc(db, 'playoff_r4_bonus_picks', pick.id), { pointsEarned: pts });
+          if (pts > 0) deltaByUid.set(pick.uid, (deltaByUid.get(pick.uid) ?? 0) + pts);
+        }
+        if (deltaByUid.size > 0) {
+          const updatedMems = group.members.map(m => ({
+            ...m,
+            totalPoints: (m.totalPoints ?? 0) + (deltaByUid.get(m.uid) ?? 0),
+          }));
+          batch.update(doc(db, 'groups', group.id), { members: updatedMems });
+        }
+        await batch.commit();
+        const snap = await getDocs(query(collection(db, 'playoff_r4_bonus_picks'), where('groupId', '==', group.id)));
+        setR4Picks(snap.docs.map(d => ({ id: d.id, ...d.data() } as { id: string; uid: string; wembyBlocks: number; pointsEarned?: number })));
+      }
+      setShowR4ScoreModal(false);
+    } finally {
+      setSavingR4Score(false);
     }
   };
 
@@ -929,6 +977,65 @@ function PlayoffPredictions({ group }: { group: Group }) {
         </View>
       </Modal>
 
+      {/* ── Round 4 Wemby Pick Modal ── */}
+      <Modal visible={showR4Modal} transparent animationType="slide">
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalBox}>
+            <Text style={styles.modalTitle}>🛡️ Wemby Blocks</Text>
+            <Text style={styles.modalSubtitle}>How many blocks will Wemby have in the entire Finals series?</Text>
+            <Text style={[styles.modalSubtitle, { marginTop: 4 }]}>Exact answer = 4 pts · Locks when Finals tips off</Text>
+            <TextInput
+              style={[styles.bonusInput, { fontSize: 40, fontWeight: '800', textAlign: 'center', marginVertical: 24, paddingVertical: 16 }]}
+              keyboardType="numeric"
+              value={r4Input}
+              onChangeText={setR4Input}
+              placeholder="?"
+              placeholderTextColor="#4b5563"
+              maxLength={3}
+            />
+            <TouchableOpacity
+              style={[styles.modalBtn, { backgroundColor: '#8b5cf6' }, (savingR4 || !r4Input) && { opacity: 0.5 }]}
+              onPress={saveR4Pick}
+              disabled={savingR4 || !r4Input}
+            >
+              <Text style={{ color: '#fff', fontWeight: '800', fontSize: 15 }}>{savingR4 ? 'Saving...' : 'Lock In Pick'}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={[styles.modalBtn, { backgroundColor: '#1e2d3d', marginTop: 8 }]} onPress={() => setShowR4Modal(false)}>
+              <Text style={{ color: '#9ca3af', fontWeight: '700' }}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ── Round 4 Admin Score Modal ── */}
+      <Modal visible={showR4ScoreModal} transparent animationType="slide">
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalBox}>
+            <Text style={styles.modalTitle}>🛡️ Enter Actual Blocks</Text>
+            <Text style={styles.modalSubtitle}>How many blocks did Wemby have in the Finals series?</Text>
+            <TextInput
+              style={[styles.bonusInput, { fontSize: 40, fontWeight: '800', textAlign: 'center', marginVertical: 24, paddingVertical: 16 }]}
+              keyboardType="numeric"
+              value={r4ActualInput}
+              onChangeText={setR4ActualInput}
+              placeholder="?"
+              placeholderTextColor="#4b5563"
+              maxLength={3}
+            />
+            <TouchableOpacity
+              style={[styles.modalBtn, { backgroundColor: '#1e40af' }, (savingR4Score || !r4ActualInput) && { opacity: 0.5 }]}
+              onPress={scoreR4Bonus}
+              disabled={savingR4Score || !r4ActualInput}
+            >
+              <Text style={{ color: '#fff', fontWeight: '800', fontSize: 15 }}>{savingR4Score ? 'Scoring...' : 'Score Everyone'}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={[styles.modalBtn, { backgroundColor: '#1e2d3d', marginTop: 8 }]} onPress={() => setShowR4ScoreModal(false)}>
+              <Text style={{ color: '#9ca3af', fontWeight: '700' }}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
       {[...rounds].reverse().map((roundSeries, displayIndex) => {
         const roundIndex = rounds.length - 1 - displayIndex;
         const label = ROUND_LABELS[roundIndex] ?? `Round ${roundIndex + 1}`;
@@ -1094,6 +1201,73 @@ function PlayoffPredictions({ group }: { group: Group }) {
                       onPress={() => setShowR3ScoreModal(true)}
                     >
                       <Text style={styles.bonusBtnText}>Admin: Enter actual result</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+              );
+            })()}
+
+            {/* Round 4 (Finals) Wemby blocks bonus card */}
+            {roundIndex === 3 && (() => {
+              const r4Started = roundStarted;
+              const r4Complete = roundComplete;
+              const myR4Pick = r4Picks.find(p => p.uid === user?.uid);
+              const isAdmin = user?.uid === group.adminUid;
+              const allScored = r4Picks.length > 0 && r4Picks.every(p => p.pointsEarned !== undefined);
+              return (
+                <View style={styles.bonusSection}>
+                  <View style={styles.bonusHeader}>
+                    <Text style={styles.bonusTitleText}>🛡️ Finals — Wemby Blocks</Text>
+                    <Text style={styles.bonusSubText}>
+                      {r4Started
+                        ? 'Locked — Finals in progress'
+                        : 'How many blocks will Wemby have in the entire Finals series? · 4 pts exact · Locks when Finals tips off'}
+                    </Text>
+                  </View>
+
+                  {r4Started && r4Picks.length > 0 && (
+                    <View style={styles.bonusTable}>
+                      {group.members.map(member => {
+                        const pick = r4Picks.find(p => p.uid === member.uid);
+                        const correct = allScored && pick != null && pick.pointsEarned! > 0;
+                        return (
+                          <View key={member.uid} style={styles.bonusTableRow}>
+                            <Text style={[styles.bonusCol, { flex: 2, color: '#d1d5db', textAlign: 'left' }]}>{member.displayName}</Text>
+                            <Text style={[styles.bonusCol, { flex: 2, color: pick != null ? '#f97316' : '#4b5563' }]}>
+                              {pick != null ? `${pick.wembyBlocks} blk` : '–'}
+                            </Text>
+                            {allScored && (
+                              <Text style={[styles.bonusCol, { color: correct ? '#22c55e' : '#ef4444' }]}>
+                                {pick != null ? (correct ? '+4 pts' : '+0 pts') : '–'}
+                              </Text>
+                            )}
+                          </View>
+                        );
+                      })}
+                    </View>
+                  )}
+
+                  {!r4Started && (
+                    <TouchableOpacity
+                      style={styles.bonusBtn}
+                      onPress={() => { setR4Input(myR4Pick != null ? String(myR4Pick.wembyBlocks) : ''); setShowR4Modal(true); }}
+                    >
+                      <Text style={styles.bonusBtnText}>
+                        {myR4Pick != null ? `My pick: ${myR4Pick.wembyBlocks} blocks · Change` : 'Make your pick'}
+                      </Text>
+                    </TouchableOpacity>
+                  )}
+                  {r4Started && myR4Pick != null && !allScored && (
+                    <Text style={[styles.bonusSubText, { paddingHorizontal: 0, paddingBottom: 4 }]}>
+                      Your pick: <Text style={{ color: '#f97316', fontWeight: '700' }}>{myR4Pick.wembyBlocks} blocks</Text>
+                    </Text>
+                  )}
+                  {isAdmin && r4Started && r4Complete && !allScored && (
+                    <TouchableOpacity
+                      style={[styles.bonusBtn, { backgroundColor: '#1e40af', marginTop: 8 }]}
+                      onPress={() => setShowR4ScoreModal(true)}
+                    >
+                      <Text style={styles.bonusBtnText}>Admin: Enter actual blocks</Text>
                     </TouchableOpacity>
                   )}
                 </View>
