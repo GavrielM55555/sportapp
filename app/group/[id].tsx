@@ -13,8 +13,9 @@ import {
 import * as Clipboard from 'expo-clipboard';
 import { Linking } from 'react-native';
 import { useLocalSearchParams, Stack, useRouter } from 'expo-router';
-import { doc, onSnapshot, collection, query, where, getDocs, writeBatch, updateDoc } from 'firebase/firestore';
+import { doc, onSnapshot, collection, query, where, getDocs, writeBatch, updateDoc, arrayRemove } from 'firebase/firestore';
 import { db } from '../../src/firebase/config';
+import { SCORED_COLLECTIONS } from '../../src/utils/groupTotals';
 import { Group, GroupMember } from '../../src/types';
 import { useAuthContext } from '../../src/context/AuthContext';
 import { GroupPredictionsTab } from '../../src/components/GroupPredictionsTab';
@@ -74,7 +75,7 @@ export default function GroupScreen() {
     if (!confirmed) return;
     try {
       const updatedMembers = group.members.filter(m => m.uid !== user?.uid);
-      const update: any = { members: updatedMembers };
+      const update: any = { members: updatedMembers, memberUids: arrayRemove(user?.uid) };
       // If admin is leaving, transfer admin to the next member
       if (isAdmin && updatedMembers.length > 0) {
         update.adminUid = updatedMembers[0].uid;
@@ -99,8 +100,7 @@ export default function GroupScreen() {
     if (!confirmed) return;
     try {
       const batch = writeBatch(db);
-      const cols = ['predictions', 'series_predictions', 'football_predictions', 'playoff_bonus_picks', 'championship_picks'];
-      for (const col of cols) {
+      for (const col of SCORED_COLLECTIONS) {
         const snap = await getDocs(query(collection(db, col), where('groupId', '==', group.id)));
         snap.docs.forEach(d => batch.delete(d.ref));
       }

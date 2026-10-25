@@ -9,8 +9,9 @@ import {
   Modal,
   TextInput,
 } from 'react-native';
-import { collection, query, where, getDocs, updateDoc, doc, writeBatch, addDoc, getDoc } from 'firebase/firestore';
+import { collection, query, where, getDocs, updateDoc, doc, writeBatch, addDoc } from 'firebase/firestore';
 import { db } from '../firebase/config';
+import { recomputeGroupTotals } from '../utils/groupTotals';
 import { Game, GamePrediction, Group, PlayoffSeries, SeriesPrediction, FootballPrediction, FootballResult } from '../types';
 import { getGamesByDates, getPlayoffGames, groupIntoSeries, currentNBASeason, playoffCache } from '../api/balldontlie';
 import { getFootballGamesByDate, SUPPORTED_LEAGUES, FootballGame } from '../api/apifootball';
@@ -60,40 +61,27 @@ function calcGamePoints(pred: GamePrediction, game: Game): number {
   return pts;
 }
 
-/** Score any unscored predictions for final games and update group member totals */
+/** Score any unscored predictions for final games, then recompute group totals */
 async function scoreFinishedGames(group: Group, finalGames: Game[], allPreds: GamePrediction[]) {
   const unscoredPreds = allPreds.filter(
     p => p.pointsEarned === undefined && finalGames.some(g => g.id === p.gameId)
   );
-  if (unscoredPreds.length === 0) return;
-
-  // Calculate points for newly scored predictions
-  const newScores = new Map<string, number>(); // predId → pts
-  for (const pred of unscoredPreds) {
-    const game = finalGames.find(g => g.id === pred.gameId)!;
-    newScores.set(pred.id!, calcGamePoints(pred, game));
+  if (unscoredPreds.length > 0) {
+    const batch = writeBatch(db);
+    for (const pred of unscoredPreds) {
+      const game = finalGames.find(g => g.id === pred.gameId)!;
+      batch.update(doc(db, 'predictions', pred.id!), { pointsEarned: calcGamePoints(pred, game) });
+    }
+    await batch.commit();
   }
+  await recomputeGroupTotals(group.id, unscoredPreds.length > 0);
+}
 
-  // Build accurate totalPoints per uid using all predictions
-  // (already scored ones keep their value; newly scored use calculated value)
-  const totalByUid = new Map<string, number>();
-  for (const pred of allPreds) {
-    const pts = newScores.has(pred.id!) ? newScores.get(pred.id!)! : (pred.pointsEarned ?? 0);
-    totalByUid.set(pred.uid, (totalByUid.get(pred.uid) ?? 0) + pts);
-  }
-
-  // Write everything in one batch
-  const batch = writeBatch(db);
-  for (const [predId, pts] of newScores) {
-    batch.update(doc(db, 'predictions', predId), { pointsEarned: pts });
-  }
-  const updatedMembers = group.members.map(m => ({
-    ...m,
-    totalPoints: totalByUid.get(m.uid) ?? m.totalPoints,
-  }));
-  batch.update(doc(db, 'groups', group.id), { members: updatedMembers });
-
-  await batch.commit();
+/** YYYY-MM-DD in US Eastern time, n days from today — game dates from the API are ET dates */
+function etDateOffset(n: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() + n);
+  return d.toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
 }
 
 // ── Season: today's games, predict before tip-off ────────────────────────
@@ -107,14 +95,9 @@ function SeasonPredictions({ group }: { group: Group }) {
   const [selectedGame, setSelectedGame] = useState<Game | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
 
-  // Date range: yesterday → tomorrow (1 API call covers all 3 days)
+  // Date range: yesterday → tomorrow in ET (1 API call covers all 3 days)
   function getDateRange(): { start: string; end: string } {
-    const offset = (n: number) => {
-      const d = new Date();
-      d.setDate(d.getDate() + n);
-      return d.toISOString().split('T')[0];
-    };
-    return { start: offset(-1), end: offset(1) };
+    return { start: etDateOffset(-1), end: etDateOffset(1) };
   }
 
   async function loadData() {
@@ -132,18 +115,18 @@ function SeasonPredictions({ group }: { group: Group }) {
       ));
       const preds = snap.docs.map(d => ({ id: d.id, ...d.data() } as GamePrediction));
 
-      // Auto-score finished games
+      // Auto-score finished games — a scoring failure shouldn't hide the games
       const finalGames = allGames.filter(g => g.status === 'final');
-      if (finalGames.length > 0) {
+      try {
         await scoreFinishedGames(group, finalGames, preds);
-        const rescored = await getDocs(query(
-          collection(db, 'predictions'),
-          where('groupId', '==', group.id)
-        ));
-        setAllPredictions(rescored.docs.map(d => ({ id: d.id, ...d.data() } as GamePrediction)));
-      } else {
-        setAllPredictions(preds);
+      } catch (e) {
+        console.error('[SeasonPredictions] scoring error:', e);
       }
+      const rescored = await getDocs(query(
+        collection(db, 'predictions'),
+        where('groupId', '==', group.id)
+      ));
+      setAllPredictions(rescored.docs.map(d => ({ id: d.id, ...d.data() } as GamePrediction)));
     } catch (e: any) {
       console.error('[SeasonPredictions] load error:', e);
       setError(e?.message?.includes('429')
@@ -460,7 +443,6 @@ function PlayoffPredictions({ group }: { group: Group }) {
         ));
         const preds = snap.docs.map(d => ({ id: d.id, ...d.data() } as SeriesPrediction));
 
-        // Merge series predictions + championship picks into one batch to avoid stale-prop overwrite
         const rounds = detectRounds(grouped);
         const unscoredPreds = preds.filter(p => p.pointsEarned === undefined && grouped.some(s => s.id === p.seriesId && s.isComplete));
 
@@ -469,80 +451,27 @@ function PlayoffPredictions({ group }: { group: Group }) {
           where('groupId', '==', group.id)
         ));
         const fetchedChampPicks = champSnap.docs.map(d => ({ id: d.id, ...d.data() } as { id: string; uid: string; teamId: number; teamAbbr: string; pointsEarned?: number }));
-        setChampPicks(fetchedChampPicks);
 
-        const finalsSeries = detectRounds(grouped)[3]?.[0];
+        const finalsSeries = rounds[3]?.[0];
         const champion = finalsSeries?.isComplete ? finalsSeries.winner : undefined;
         const unscoredChamp = champion ? fetchedChampPicks.filter(p => p.pointsEarned === undefined) : [];
 
-        if (unscoredPreds.length > 0 || unscoredChamp.length > 0) {
-          const combinedBatch = writeBatch(db);
-          const combinedDelta = new Map<string, number>();
+        // Only pointsEarned is written per pick; member totals are recomputed at the end
+        const scoringBatch = writeBatch(db);
+        let scoringWrites = 0;
 
-          for (const pred of unscoredPreds) {
-            const series = grouped.find(s => s.id === pred.seriesId)!;
-            const roundIndex = rounds.findIndex(r => r.some(s => s.id === series.id));
-            const pts = calcSeriesPoints(roundIndex, series.winner?.id === pred.predictedWinnerTeamId, series.totalGames === pred.predictedGames);
-            combinedBatch.update(doc(db, 'series_predictions', pred.id!), { pointsEarned: pts });
-            combinedDelta.set(pred.uid, (combinedDelta.get(pred.uid) ?? 0) + pts);
-          }
-
-          for (const pick of unscoredChamp) {
-            const pts = pick.teamId === champion!.id ? (CHAMP_POINTS[pick.teamAbbr] ?? 5) : 0;
-            combinedBatch.update(doc(db, 'championship_picks', pick.id), { pointsEarned: pts });
-            if (pts > 0) combinedDelta.set(pick.uid, (combinedDelta.get(pick.uid) ?? 0) + pts);
-          }
-
-          const hasFinalsInBatch = unscoredPreds.some(pred => {
-            const series = grouped.find(s => s.id === pred.seriesId);
-            return series && rounds.findIndex(r => r.some(s => s.id === series.id)) === 3;
-          });
-
-          const groupUpdate: Record<string, any> = {};
-          if (combinedDelta.size > 0) {
-            groupUpdate.members = group.members.map(m => ({
-              ...m,
-              totalPoints: (m.totalPoints ?? 0) + (combinedDelta.get(m.uid) ?? 0),
-            }));
-          }
-          if (hasFinalsInBatch) groupUpdate.finalsSeriesCorrected = true;
-          if (Object.keys(groupUpdate).length > 0) {
-            combinedBatch.update(doc(db, 'groups', group.id), groupUpdate);
-          }
-
-          await combinedBatch.commit();
-
-          const rescored = await getDocs(query(collection(db, 'series_predictions'), where('groupId', '==', group.id)));
-          setAllPredictions(rescored.docs.map(d => ({ id: d.id, ...d.data() } as SeriesPrediction)));
-          const rescoredChamp = await getDocs(query(collection(db, 'championship_picks'), where('groupId', '==', group.id)));
-          setChampPicks(rescoredChamp.docs.map(d => ({ id: d.id, ...d.data() } as { id: string; uid: string; teamId: number; teamAbbr: string; pointsEarned?: number })));
-        } else {
-          setAllPredictions(preds);
+        for (const pred of unscoredPreds) {
+          const series = grouped.find(s => s.id === pred.seriesId)!;
+          const roundIndex = rounds.findIndex(r => r.some(s => s.id === series.id));
+          const pts = calcSeriesPoints(roundIndex, series.winner?.id === pred.predictedWinnerTeamId, series.totalGames === pred.predictedGames);
+          scoringBatch.update(doc(db, 'series_predictions', pred.id!), { pointsEarned: pts });
+          scoringWrites++;
         }
 
-        // One-time correction: re-apply Finals series delta that was overwritten by the old champ batch
-        if (finalsSeries?.isComplete) {
-          const freshGroupSnap = await getDoc(doc(db, 'groups', group.id));
-          const freshGroupData = freshGroupSnap.data() as any;
-          if (!freshGroupData?.finalsSeriesCorrected) {
-            const finalsSeriesPreds = preds.filter(p => p.seriesId === finalsSeries.id && (p.pointsEarned ?? 0) > 0);
-            if (finalsSeriesPreds.length > 0) {
-              const correctionDelta = new Map<string, number>();
-              for (const pred of finalsSeriesPreds) {
-                correctionDelta.set(pred.uid, (correctionDelta.get(pred.uid) ?? 0) + pred.pointsEarned!);
-              }
-              const freshMembers: typeof group.members = freshGroupData?.members ?? group.members;
-              const correctionBatch = writeBatch(db);
-              correctionBatch.update(doc(db, 'groups', group.id), {
-                members: freshMembers.map(m => ({
-                  ...m,
-                  totalPoints: (m.totalPoints ?? 0) + (correctionDelta.get(m.uid) ?? 0),
-                })),
-                finalsSeriesCorrected: true,
-              });
-              await correctionBatch.commit();
-            }
-          }
+        for (const pick of unscoredChamp) {
+          const pts = pick.teamId === champion!.id ? (CHAMP_POINTS[pick.teamAbbr] ?? 5) : 0;
+          scoringBatch.update(doc(db, 'championship_picks', pick.id), { pointsEarned: pts });
+          scoringWrites++;
         }
 
         // Load Round 2 OT picks
@@ -563,43 +492,37 @@ function PlayoffPredictions({ group }: { group: Group }) {
         const fetchedR4Picks = r4Snap.docs.map(d => ({ id: d.id, ...d.data() } as { id: string; uid: string; wembyBlocks: number; pointsEarned?: number }));
         setR4Picks(fetchedR4Picks);
 
-        // Auto-score and fix Round 2 OT bonus when Round 2 is complete
-        const r2 = detectRounds(grouped)[1] ?? [];
+        // Auto-score Round 2 OT bonus when Round 2 is complete
+        const r2 = rounds[1] ?? [];
         const r2Complete = r2.length === 4 && r2.every(s => s.isComplete);
         if (r2Complete) {
           const ACTUAL_R2_OT = 1; // CLE vs DET Game 5 confirmed only OT game in R2
-          const unscoredOt = fetchedOtPicks.filter(p => p.pointsEarned === undefined);
-          const wrongOt = fetchedOtPicks.filter(p => p.pointsEarned !== undefined && p.pointsEarned !== 0 && p.pointsEarned !== 4);
-
-          if (unscoredOt.length > 0 || wrongOt.length > 0) {
-            const otBatch = writeBatch(db);
-            const deltaByUid = new Map<string, number>();
-
-            for (const pick of unscoredOt) {
-              const pts = pick.otGames === ACTUAL_R2_OT ? 4 : 0;
-              otBatch.update(doc(db, 'playoff_bonus_picks', pick.id), { pointsEarned: pts });
-              if (pts > 0) deltaByUid.set(pick.uid, (deltaByUid.get(pick.uid) ?? 0) + pts);
-            }
-
-            for (const pick of wrongOt) {
-              const correctPts = pick.otGames === ACTUAL_R2_OT ? 4 : 0;
-              const delta = correctPts - pick.pointsEarned!;
-              otBatch.update(doc(db, 'playoff_bonus_picks', pick.id), { pointsEarned: correctPts });
-              if (delta !== 0) deltaByUid.set(pick.uid, (deltaByUid.get(pick.uid) ?? 0) + delta);
-            }
-
-            if (deltaByUid.size > 0) {
-              const updatedMems = group.members.map(m => ({
-                ...m,
-                totalPoints: (m.totalPoints ?? 0) + (deltaByUid.get(m.uid) ?? 0),
-              }));
-              otBatch.update(doc(db, 'groups', group.id), { members: updatedMems });
-            }
-
-            await otBatch.commit();
-            const rescored = await getDocs(query(collection(db, 'playoff_bonus_picks'), where('groupId', '==', group.id)));
-            setOtPicks(rescored.docs.map(d => ({ id: d.id, ...d.data() } as { id: string; uid: string; otGames: number; pointsEarned?: number })));
+          for (const pick of fetchedOtPicks.filter(p => p.pointsEarned === undefined)) {
+            scoringBatch.update(doc(db, 'playoff_bonus_picks', pick.id), { pointsEarned: pick.otGames === ACTUAL_R2_OT ? 4 : 0 });
+            scoringWrites++;
           }
+        }
+
+        // A scoring failure shouldn't hide the bracket
+        try {
+          if (scoringWrites > 0) await scoringBatch.commit();
+          await recomputeGroupTotals(group.id, scoringWrites > 0);
+        } catch (e) {
+          console.error('[PlayoffPredictions] scoring error:', e);
+        }
+
+        if (scoringWrites > 0) {
+          const [seriesSnap, champSnap2, otSnap2] = await Promise.all([
+            getDocs(query(collection(db, 'series_predictions'), where('groupId', '==', group.id))),
+            getDocs(query(collection(db, 'championship_picks'), where('groupId', '==', group.id))),
+            getDocs(query(collection(db, 'playoff_bonus_picks'), where('groupId', '==', group.id))),
+          ]);
+          setAllPredictions(seriesSnap.docs.map(d => ({ id: d.id, ...d.data() } as SeriesPrediction)));
+          setChampPicks(champSnap2.docs.map(d => ({ id: d.id, ...d.data() } as { id: string; uid: string; teamId: number; teamAbbr: string; pointsEarned?: number })));
+          setOtPicks(otSnap2.docs.map(d => ({ id: d.id, ...d.data() } as { id: string; uid: string; otGames: number; pointsEarned?: number })));
+        } else {
+          setAllPredictions(preds);
+          setChampPicks(fetchedChampPicks);
         }
       } catch (e: any) {
         console.error('[PlayoffPredictions] load error:', e);
@@ -734,20 +657,11 @@ function PlayoffPredictions({ group }: { group: Group }) {
       const unscored = r4Picks.filter(p => p.pointsEarned === undefined);
       if (unscored.length > 0) {
         const batch = writeBatch(db);
-        const deltaByUid = new Map<string, number>();
         for (const pick of unscored) {
-          const pts = pick.wembyBlocks === actualBlocks ? 4 : 0;
-          batch.update(doc(db, 'playoff_r4_bonus_picks', pick.id), { pointsEarned: pts });
-          if (pts > 0) deltaByUid.set(pick.uid, (deltaByUid.get(pick.uid) ?? 0) + pts);
-        }
-        if (deltaByUid.size > 0) {
-          const updatedMems = group.members.map(m => ({
-            ...m,
-            totalPoints: (m.totalPoints ?? 0) + (deltaByUid.get(m.uid) ?? 0),
-          }));
-          batch.update(doc(db, 'groups', group.id), { members: updatedMems });
+          batch.update(doc(db, 'playoff_r4_bonus_picks', pick.id), { pointsEarned: pick.wembyBlocks === actualBlocks ? 4 : 0 });
         }
         await batch.commit();
+        await recomputeGroupTotals(group.id);
         const snap = await getDocs(query(collection(db, 'playoff_r4_bonus_picks'), where('groupId', '==', group.id)));
         setR4Picks(snap.docs.map(d => ({ id: d.id, ...d.data() } as { id: string; uid: string; wembyBlocks: number; pointsEarned?: number })));
       }
@@ -764,20 +678,11 @@ function PlayoffPredictions({ group }: { group: Group }) {
       const unscored = r3Picks.filter(p => p.pointsEarned === undefined);
       if (unscored.length > 0) {
         const batch = writeBatch(db);
-        const deltaByUid = new Map<string, number>();
         for (const pick of unscored) {
-          const pts = pick.pointDiff === actualDiff ? 4 : 0;
-          batch.update(doc(db, 'playoff_r3_bonus_picks', pick.id), { pointsEarned: pts });
-          if (pts > 0) deltaByUid.set(pick.uid, (deltaByUid.get(pick.uid) ?? 0) + pts);
-        }
-        if (deltaByUid.size > 0) {
-          const updatedMems = group.members.map(m => ({
-            ...m,
-            totalPoints: (m.totalPoints ?? 0) + (deltaByUid.get(m.uid) ?? 0),
-          }));
-          batch.update(doc(db, 'groups', group.id), { members: updatedMems });
+          batch.update(doc(db, 'playoff_r3_bonus_picks', pick.id), { pointsEarned: pick.pointDiff === actualDiff ? 4 : 0 });
         }
         await batch.commit();
+        await recomputeGroupTotals(group.id);
         const snap = await getDocs(query(collection(db, 'playoff_r3_bonus_picks'), where('groupId', '==', group.id)));
         setR3Picks(snap.docs.map(d => ({ id: d.id, ...d.data() } as { id: string; uid: string; pointDiff: number; pointsEarned?: number })));
       }
@@ -1459,29 +1364,22 @@ function FootballPredictions({ group }: { group: Group }) {
         const unscoredPreds = preds.filter(p =>
           p.pointsEarned === undefined && finalGames.some(g => g.id === p.fixtureId)
         );
-        if (unscoredPreds.length > 0) {
-          const batch = writeBatch(db);
-          const newScores = new Map<string, number>();
-          for (const pred of unscoredPreds) {
-            const game = finalGames.find(g => g.id === pred.fixtureId)!;
-            newScores.set(pred.id!, calcFootballPoints(pred, game));
+        // A scoring failure shouldn't hide the fixtures
+        try {
+          if (unscoredPreds.length > 0) {
+            const batch = writeBatch(db);
+            for (const pred of unscoredPreds) {
+              const game = finalGames.find(g => g.id === pred.fixtureId)!;
+              batch.update(doc(db, 'football_predictions', pred.id!), { pointsEarned: calcFootballPoints(pred, game) });
+            }
+            await batch.commit();
           }
-          // Only accumulate points from newly scored predictions (delta), not all preds
-          const totalByUid = new Map<string, number>();
-          for (const [predId, pts] of newScores) {
-            const pred = unscoredPreds.find(p => p.id === predId);
-            if (pred) totalByUid.set(pred.uid, (totalByUid.get(pred.uid) ?? 0) + pts);
-          }
-          for (const [predId, pts] of newScores) {
-            batch.update(doc(db, 'football_predictions', predId), { pointsEarned: pts });
-          }
-          const updatedMembers = group.members.map(m => ({
-            ...m,
-            totalPoints: (m.totalPoints ?? 0) + (totalByUid.get(m.uid) ?? 0),
-          }));
-          batch.update(doc(db, 'groups', group.id), { members: updatedMembers });
-          await batch.commit();
+          await recomputeGroupTotals(group.id, unscoredPreds.length > 0);
+        } catch (e) {
+          console.error('[FootballPredictions] scoring error:', e);
+        }
 
+        if (unscoredPreds.length > 0) {
           const rescored = await getDocs(query(
             collection(db, 'football_predictions'),
             where('groupId', '==', group.id)

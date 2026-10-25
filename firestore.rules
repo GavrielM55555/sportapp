@@ -2,75 +2,135 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Users can read/write their own user doc
+    function signedIn() { return request.auth != null; }
+    function groupData(groupId) { return get(/databases/$(database)/documents/groups/$(groupId)).data; }
+    function isGroupMember(groupId) { return signedIn() && request.auth.uid in groupData(groupId).memberUids; }
+    function isGroupAdmin(groupId) { return signedIn() && groupData(groupId).adminUid == request.auth.uid; }
+    function changedKeys() { return request.resource.data.diff(resource.data).affectedKeys(); }
+
+    // ── Picks (shared by every prediction / bonus collection) ──────────────
+
+    // Owner creates their own unscored pick in a group they belong to
+    function canCreatePick() {
+      return signedIn()
+        && request.resource.data.uid == request.auth.uid
+        && isGroupMember(request.resource.data.groupId)
+        && !('pointsEarned' in request.resource.data);
+    }
+
+    // Owner edits their own pick until it's scored; can't set points or move it
+    function canEditOwnPick() {
+      return signedIn()
+        && resource.data.uid == request.auth.uid
+        && !('pointsEarned' in resource.data)
+        && !changedKeys().hasAny(['uid', 'groupId', 'pointsEarned']);
+    }
+
+    // Any group member may score a pick (scoring runs on members' devices).
+    // Points are set once and within range; rewriting the same value is allowed
+    // so two members scoring at the same moment don't fail each other.
+    function canScorePick(maxPoints) {
+      let pts = request.resource.data.pointsEarned;
+      return isGroupMember(resource.data.groupId)
+        && changedKeys().hasOnly(['pointsEarned'])
+        && pts is number && pts >= 0 && pts <= maxPoints
+        && (!('pointsEarned' in resource.data) || resource.data.pointsEarned == pts);
+    }
+
+    // Owner, or the group admin when deleting the whole group
+    function canDeletePick() {
+      return signedIn()
+        && (resource.data.uid == request.auth.uid || isGroupAdmin(resource.data.groupId));
+    }
+
+    match /predictions/{predId} {            // NBA game: 2 winner + 5 exact
+      allow read: if signedIn();
+      allow create: if canCreatePick();
+      allow update: if canEditOwnPick() || canScorePick(7);
+      allow delete: if canDeletePick();
+    }
+
+    match /series_predictions/{predId} {     // Finals winner + length
+      allow read: if signedIn();
+      allow create: if canCreatePick();
+      allow update: if canEditOwnPick() || canScorePick(9);
+      allow delete: if canDeletePick();
+    }
+
+    match /football_predictions/{predId} {   // 2 result + 3 exact
+      allow read: if signedIn();
+      allow create: if canCreatePick();
+      allow update: if canEditOwnPick() || canScorePick(5);
+      allow delete: if canDeletePick();
+    }
+
+    match /championship_picks/{pickId} {     // longest-shot champion
+      allow read: if signedIn();
+      allow create: if canCreatePick();
+      allow update: if canEditOwnPick() || canScorePick(10);
+      allow delete: if canDeletePick();
+    }
+
+    match /playoff_bonus_picks/{pickId} {    // Round 2 OT games
+      allow read: if signedIn();
+      allow create: if canCreatePick();
+      allow update: if canEditOwnPick() || canScorePick(4);
+      allow delete: if canDeletePick();
+    }
+
+    match /playoff_r3_bonus_picks/{pickId} { // Conf Finals point diff
+      allow read: if signedIn();
+      allow create: if canCreatePick();
+      allow update: if canEditOwnPick() || canScorePick(4);
+      allow delete: if canDeletePick();
+    }
+
+    match /playoff_r4_bonus_picks/{pickId} { // Finals Wemby blocks
+      allow read: if signedIn();
+      allow create: if canCreatePick();
+      allow update: if canEditOwnPick() || canScorePick(4);
+      allow delete: if canDeletePick();
+    }
+
+    // ── Users ──────────────────────────────────────────────────────────────
+
     match /users/{userId} {
-      allow read: if request.auth != null;
-      allow write: if request.auth != null && request.auth.uid == userId;
+      allow read: if signedIn();
+      allow write: if signedIn() && request.auth.uid == userId;
     }
 
-    // Groups: any logged-in user can read, members can update
+    match /push_tokens/{userId} {
+      allow read, delete: if signedIn() && request.auth.uid == userId;
+      allow create, update: if signedIn() && request.auth.uid == userId
+        && request.resource.data.uid == userId;
+    }
+
+    // ── Groups ─────────────────────────────────────────────────────────────
+
+    // memberUids may only gain or lose the caller's own uid
+    function onlyOwnUidChanged() {
+      let me = [request.auth.uid];
+      return request.resource.data.memberUids.removeAll(me).toSet()
+        == resource.data.memberUids.removeAll(me).toSet();
+    }
+
     match /groups/{groupId} {
-      allow read: if request.auth != null;
-      allow create: if request.auth != null;
-      allow update: if request.auth != null;
-      allow delete: if request.auth != null && request.auth.uid == resource.data.adminUid;
-    }
-
-    // Predictions: any logged-in user can read; owner can create;
-    // any logged-in user can update (needed for group scoring of finished games)
-    match /predictions/{predId} {
-      allow read: if request.auth != null;
-      allow create: if request.auth != null && request.auth.uid == request.resource.data.uid;
-      allow update: if request.auth != null;
-      allow delete: if request.auth != null;
-    }
-
-    // Series predictions
-    match /series_predictions/{predId} {
-      allow read: if request.auth != null;
-      allow create: if request.auth != null && request.auth.uid == request.resource.data.uid;
-      allow update: if request.auth != null;
-      allow delete: if request.auth != null;
-    }
-
-    // Football predictions
-    match /football_predictions/{predId} {
-      allow read: if request.auth != null;
-      allow create: if request.auth != null && request.auth.uid == request.resource.data.uid;
-      allow update: if request.auth != null;
-      allow delete: if request.auth != null;
-    }
-
-    // Playoff bonus picks
-    match /playoff_bonus_picks/{pickId} {
-      allow read: if request.auth != null;
-      allow create: if request.auth != null && request.auth.uid == request.resource.data.uid;
-      allow update: if request.auth != null;
-      allow delete: if request.auth != null;
-    }
-
-    // Round 3 bonus picks
-    match /playoff_r3_bonus_picks/{pickId} {
-      allow read: if request.auth != null;
-      allow create: if request.auth != null && request.auth.uid == request.resource.data.uid;
-      allow update: if request.auth != null;
-      allow delete: if request.auth != null;
-    }
-
-    // Round 4 (Finals) Wemby blocks bonus picks
-    match /playoff_r4_bonus_picks/{pickId} {
-      allow read: if request.auth != null;
-      allow create: if request.auth != null && request.auth.uid == request.resource.data.uid;
-      allow update: if request.auth != null;
-      allow delete: if request.auth != null;
-    }
-
-    // Championship picks
-    match /championship_picks/{pickId} {
-      allow read: if request.auth != null;
-      allow create: if request.auth != null && request.auth.uid == request.resource.data.uid;
-      allow update: if request.auth != null;
-      allow delete: if request.auth != null;
+      allow read: if signedIn();
+      allow create: if signedIn()
+        && request.resource.data.adminUid == request.auth.uid
+        && request.resource.data.memberUids == [request.auth.uid];
+      allow delete: if signedIn() && resource.data.adminUid == request.auth.uid;
+      // Admin can change anything. Everyone else can join, leave, or
+      // rewrite member totals (recomputed from picks on every load).
+      allow update: if signedIn() && (
+        resource.data.adminUid == request.auth.uid
+        || (
+          changedKeys().hasOnly(['members', 'memberUids'])
+          && onlyOwnUidChanged()
+          && (request.auth.uid in resource.data.memberUids
+              || request.auth.uid in request.resource.data.memberUids)
+        )
+      );
     }
   }
 }
