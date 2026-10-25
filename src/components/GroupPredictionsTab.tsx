@@ -13,7 +13,7 @@ import { collection, query, where, getDocs, updateDoc, doc, writeBatch, addDoc }
 import { db } from '../firebase/config';
 import { recomputeGroupTotals } from '../utils/groupTotals';
 import { Game, GamePrediction, Group, PlayoffSeries, SeriesPrediction, FootballPrediction, FootballResult } from '../types';
-import { getGamesByDates, getPlayoffGames, groupIntoSeries, currentNBASeason, playoffCache } from '../api/balldontlie';
+import { getGamesByDates, getPlayoffGames, groupIntoSeries, currentNBASeason, playoffCache } from '../api/nba';
 import { getFootballGamesByDate, SUPPORTED_LEAGUES, FootballGame } from '../api/apifootball';
 import { PredictGameModal } from './PredictGameModal';
 import { PredictSeriesModal } from './PredictSeriesModal';

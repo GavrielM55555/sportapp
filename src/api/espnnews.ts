@@ -1,3 +1,5 @@
+import { espnJson } from './espn';
+
 // ESPN unofficial public API — free, no key, CORS-friendly
 const ESPN_BASE = 'https://site.api.espn.com/apis/site/v2/sports';
 
@@ -42,11 +44,7 @@ function mapArticle(raw: any, sport: 'nba' | 'football', leagueId?: number): New
   };
 }
 
-async function fetchJson(url: string): Promise<any> {
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`ESPN news ${res.status}`);
-  return res.json();
-}
+const fetchJson = (url: string): Promise<any> => espnJson(url);
 
 export async function getNbaNews(limit = 20): Promise<NewsArticle[]> {
   const key = `nba:${limit}`;

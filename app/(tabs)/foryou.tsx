@@ -6,7 +6,7 @@ import {
 import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { usePreferences, SportPref } from '../../src/hooks/usePreferences';
-import { getGamesByDates } from '../../src/api/balldontlie';
+import { getGamesByDates } from '../../src/api/nba';
 import { getFootballGamesByDate, SUPPORTED_LEAGUES, FootballGame } from '../../src/api/apifootball';
 import { getBasketballGamesByDate, BASKETBALL_LEAGUES, BasketballGame } from '../../src/api/apibasketball';
 import { Game } from '../../src/types';

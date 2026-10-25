@@ -9,7 +9,7 @@ import {
   RefreshControl,
 } from 'react-native';
 import { router } from 'expo-router';
-import { getPlayoffGames, groupIntoSeries, currentNBASeason } from '../../src/api/balldontlie';
+import { getPlayoffGames, groupIntoSeries, currentNBASeason } from '../../src/api/nba';
 import { getMajorEvents, LeagueEvent } from '../../src/api/apifootball';
 import { PlayoffSeries } from '../../src/types';
 

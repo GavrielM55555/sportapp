@@ -1,3 +1,5 @@
+import { espnJson } from './espn';
+
 const SCOREBOARD_URL = 'https://site.api.espn.com/apis/site/v2/sports/soccer';
 const STANDINGS_URL = 'https://site.api.espn.com/apis/v2/sports/soccer';
 
@@ -89,9 +91,7 @@ const CACHE_TTL = 5 * 60_000;
 async function get<T>(url: string): Promise<T> {
   const cached = cache.get(url);
   if (cached && Date.now() - cached.ts < CACHE_TTL) return cached.data as T;
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`ESPN ${res.status}: ${url}`);
-  const data = await res.json();
+  const data = await espnJson(url);
   cache.set(url, { data, ts: Date.now() });
   return data as T;
 }

@@ -10,7 +10,7 @@ import {
   ScrollView,
   Image,
 } from 'react-native';
-import { getGamesByDates } from '../../src/api/balldontlie';
+import { getGamesByDates } from '../../src/api/nba';
 import { getFootballGamesByDate, getStandings, SUPPORTED_LEAGUES, FootballGame, FootballLeague, StandingRow } from '../../src/api/apifootball';
 import { getBasketballGamesByDate, getBasketballStandings, BASKETBALL_LEAGUES, BasketballGame, BasketballLeague, BasketballStandingRow } from '../../src/api/apibasketball';
 import { usePreferences } from '../../src/hooks/usePreferences';
