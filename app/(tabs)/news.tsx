@@ -5,6 +5,10 @@ import {
 } from 'react-native';
 import { usePreferences } from '../../src/hooks/usePreferences';
 import { getNewsForPreferences, NewsArticle } from '../../src/api/espnnews';
+import { SPORTS, SportId } from '../../src/sports';
+import { ChipBar } from '../../src/components/scores/ui';
+
+const SPORT_BY_ID = new Map(SPORTS.map(s => [s.id, s]));
 
 function timeAgo(isoDate: string): string {
   const diff = Date.now() - new Date(isoDate).getTime();
@@ -28,7 +32,7 @@ function NewsCard({ article }: { article: NewsArticle }) {
       <View style={styles.cardBody}>
         <View style={styles.cardMeta}>
           <Text style={styles.cardSport}>
-            {article.sport === 'nba' ? '🏀 NBA' : '⚽ Football'}
+            {SPORT_BY_ID.get(article.sport)?.emoji} {SPORT_BY_ID.get(article.sport)?.label}
           </Text>
           <Text style={styles.cardTime}>{timeAgo(article.publishedAt)}</Text>
         </View>
@@ -48,6 +52,7 @@ export default function NewsScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [filter, setFilter] = useState<SportId | 'all'>('all');
 
   const load = useCallback(async (isRefresh = false) => {
     setError(null);
@@ -82,17 +87,28 @@ export default function NewsScreen() {
     );
   }
 
+  // Filter chips: only the sports that actually have stories in the feed
+  const present = SPORTS.filter(s => articles.some(a => a.sport === s.id));
+  const shown = filter === 'all' ? articles : articles.filter(a => a.sport === filter);
+
   return (
     <View style={styles.container}>
       {prefs.sports.length === 0 && (
         <View style={styles.prefBanner}>
           <Text style={styles.prefBannerText}>
-            Showing general sports news · Go to For You tab to pick your leagues
+            Showing general sports news · Pick your sports in the Me tab
           </Text>
         </View>
       )}
+      {present.length > 1 && (
+        <ChipBar
+          items={[{ key: 'all', label: 'All' }, ...present.map(s => ({ key: s.id, emoji: s.emoji, label: s.label }))]}
+          isActive={k => k === filter}
+          onPress={k => setFilter(k as SportId | 'all')}
+        />
+      )}
       <FlatList
-        data={articles}
+        data={shown}
         keyExtractor={a => a.id}
         renderItem={({ item }) => <NewsCard article={item} />}
         refreshControl={

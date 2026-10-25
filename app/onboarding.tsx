@@ -6,14 +6,10 @@ import { router } from 'expo-router';
 import { usePreferences, SportPref } from '../src/hooks/usePreferences';
 import { SUPPORTED_LEAGUES } from '../src/api/apifootball';
 import { BASKETBALL_LEAGUES } from '../src/api/apibasketball';
-
-const SPORTS: { id: SportPref; label: string; emoji: string; desc: string }[] = [
-  { id: 'nba', label: 'NBA', emoji: '🏀', desc: 'Regular season & playoffs' },
-  { id: 'football', label: 'Football', emoji: '⚽', desc: 'Premier League, La Liga & more' },
-];
+import { SPORTS } from '../src/sports';
 
 export default function OnboardingScreen() {
-  const { prefs, toggleSport, toggleLeague, completeOnboarding, save } = usePreferences();
+  const { save } = usePreferences();
   const [localSports, setLocalSports] = useState<SportPref[]>([]);
   const [localLeagues, setLocalLeagues] = useState<number[]>([]);
   const [localBasketballLeagues, setLocalBasketballLeagues] = useState<number[]>([]);
@@ -41,7 +37,8 @@ export default function OnboardingScreen() {
 
   const hasFootball = localSports.includes('football');
   const hasNba = localSports.includes('nba');
-  const canFinish = localSports.length > 0 && (!hasFootball || localLeagues.length > 0);
+  // Leagues are optional — with none picked, football shows the big leagues
+  const canFinish = localSports.length > 0;
 
   const handleDone = async () => {
     await save({ sports: localSports, leagueIds: localLeagues, basketballLeagueIds: localBasketballLeagues, onboardingDone: true });
@@ -49,7 +46,7 @@ export default function OnboardingScreen() {
   };
 
   const handleSkip = async () => {
-    await save({ sports: [], leagueIds: [], onboardingDone: true });
+    await save({ sports: [], leagueIds: [], basketballLeagueIds: [], onboardingDone: true });
     router.replace('/(tabs)/foryou');
   };
 
@@ -86,7 +83,7 @@ export default function OnboardingScreen() {
         {hasFootball && (
           <View style={styles.leagueSection}>
             <Text style={styles.sectionLabel}>
-              Which football leagues?{localLeagues.length === 0 ? '  ⚠️ Pick at least one' : ` · ${localLeagues.length} selected`}
+              Which football leagues?{localLeagues.length === 0 ? ' (optional)' : ` · ${localLeagues.length} selected`}
             </Text>
             <View style={styles.leagueGrid}>
               {SUPPORTED_LEAGUES.map(l => {
@@ -159,9 +156,9 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 12,
   },
 
-  sportRow: { flexDirection: 'row', gap: 12, marginBottom: 32 },
+  sportRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginBottom: 32 },
   sportCard: {
-    flex: 1, backgroundColor: '#1a2634', borderRadius: 16, padding: 20,
+    width: '30%', flexGrow: 1, backgroundColor: '#1a2634', borderRadius: 16, padding: 14,
     alignItems: 'center', borderWidth: 2, borderColor: 'transparent',
   },
   sportCardActive: { borderColor: '#f97316', backgroundColor: '#1f1200' },

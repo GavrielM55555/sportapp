@@ -17,9 +17,8 @@ export default function TabsLayout() {
       <Tabs.Screen
         name="foryou"
         options={{
-          title: 'For You',
-          headerShown: false,
-          tabBarIcon: ({ color, size }) => <Ionicons name="star" size={size} color={color} />,
+          title: 'Home',
+          tabBarIcon: ({ color, size }) => <Ionicons name="home" size={size} color={color} />,
         }}
       />
       <Tabs.Screen
@@ -30,6 +29,13 @@ export default function TabsLayout() {
         }}
       />
       <Tabs.Screen
+        name="groups"
+        options={{
+          title: 'Predict',
+          tabBarIcon: ({ color, size }) => <Ionicons name="trophy" size={size} color={color} />,
+        }}
+      />
+      <Tabs.Screen
         name="news"
         options={{
           title: 'News',
@@ -37,19 +43,14 @@ export default function TabsLayout() {
         }}
       />
       <Tabs.Screen
-        name="playoffs"
+        name="me"
         options={{
-          title: 'Events',
-          tabBarIcon: ({ color, size }) => <Ionicons name="calendar" size={size} color={color} />,
+          title: 'Me',
+          tabBarIcon: ({ color, size }) => <Ionicons name="person-circle" size={size} color={color} />,
         }}
       />
-      <Tabs.Screen
-        name="groups"
-        options={{
-          title: 'My Groups',
-          tabBarIcon: ({ color, size }) => <Ionicons name="people" size={size} color={color} />,
-        }}
-      />
+      {/* Retired from the tab bar: the playoff bracket moves into Predict */}
+      <Tabs.Screen name="playoffs" options={{ href: null }} />
       <Tabs.Screen name="football" options={{ href: null }} />
     </Tabs>
   );

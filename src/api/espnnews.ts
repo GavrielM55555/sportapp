@@ -1,17 +1,18 @@
 import { espnJson } from './espn';
+import { leagueSlug } from './apifootball';
+import { SportId } from '../sports';
 
 // ESPN unofficial public API — free, no key, CORS-friendly
 const ESPN_BASE = 'https://site.api.espn.com/apis/site/v2/sports';
 
-// Maps our api-football league IDs → ESPN soccer league slugs
-const LEAGUE_ESPN_SLUG: Record<number, string> = {
-  39:  'eng.1',          // Premier League
-  140: 'esp.1',          // La Liga
-  78:  'ger.1',          // Bundesliga
-  135: 'ita.1',          // Serie A
-  61:  'fra.1',          // Ligue 1
-  2:   'UEFA.CHAMPIONS', // Champions League
-  1:   'FIFA.WORLD',     // World Cup
+// ESPN news path per sport (football is per league, see below)
+const SPORT_NEWS_PATH: Record<Exclude<SportId, 'football'>, string> = {
+  nba: 'basketball/nba',
+  f1: 'racing/f1',
+  nfl: 'football/nfl',
+  mlb: 'baseball/mlb',
+  ufc: 'mma/ufc',
+  tennis: 'tennis/atp',
 };
 
 export interface NewsArticle {
@@ -22,7 +23,7 @@ export interface NewsArticle {
   url: string;
   publishedAt: string;  // ISO string
   source: string;
-  sport: 'nba' | 'football';
+  sport: SportId;
   leagueId?: number;
 }
 
@@ -30,7 +31,7 @@ export interface NewsArticle {
 const cache = new Map<string, { data: NewsArticle[]; ts: number }>();
 const CACHE_TTL = 10 * 60_000; // 10 minutes
 
-function mapArticle(raw: any, sport: 'nba' | 'football', leagueId?: number): NewsArticle {
+function mapArticle(raw: any, sport: SportId, leagueId?: number): NewsArticle {
   return {
     id: String(raw.dataSourceIdentifier ?? raw.id ?? Math.random()),
     headline: raw.headline ?? '',
@@ -44,79 +45,68 @@ function mapArticle(raw: any, sport: 'nba' | 'football', leagueId?: number): New
   };
 }
 
-const fetchJson = (url: string): Promise<any> => espnJson(url);
-
-export async function getNbaNews(limit = 20): Promise<NewsArticle[]> {
-  const key = `nba:${limit}`;
-  const cached = cache.get(key);
-  if (cached && Date.now() - cached.ts < CACHE_TTL) return cached.data;
-
-  const data = await fetchJson(`${ESPN_BASE}/basketball/nba/news?limit=${limit}`);
-  const articles = (data.articles ?? []).map((a: any) => mapArticle(a, 'nba'));
-  cache.set(key, { data: articles, ts: Date.now() });
-  return articles;
+async function cached(key: string, load: () => Promise<NewsArticle[]>): Promise<NewsArticle[]> {
+  const hit = cache.get(key);
+  if (hit && Date.now() - hit.ts < CACHE_TTL) return hit.data;
+  const data = await load();
+  cache.set(key, { data, ts: Date.now() });
+  return data;
 }
 
-export async function getFootballNews(leagueIds: number[], limit = 30): Promise<NewsArticle[]> {
-  const key = `football:${leagueIds.sort().join(',')}:${limit}`;
-  const cached = cache.get(key);
-  if (cached && Date.now() - cached.ts < CACHE_TTL) return cached.data;
+function byNewest(a: NewsArticle, b: NewsArticle): number {
+  return new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime();
+}
 
+/** Remove repeats (the same story is often filed under several leagues) */
+function dedupe(articles: NewsArticle[]): NewsArticle[] {
+  const seen = new Set<string>();
+  return articles.filter(a => (seen.has(a.id) ? false : (seen.add(a.id), true)));
+}
+
+export function getSportNews(sport: Exclude<SportId, 'football'>, limit = 20): Promise<NewsArticle[]> {
+  return cached(`${sport}:${limit}`, async () => {
+    const data = await espnJson(`${ESPN_BASE}/${SPORT_NEWS_PATH[sport]}/news?limit=${limit}`);
+    return (data.articles ?? []).map((a: any) => mapArticle(a, sport));
+  });
+}
+
+export function getFootballNews(leagueIds: number[], limit = 30): Promise<NewsArticle[]> {
   const slugs = leagueIds
-    .map(id => ({ id, slug: LEAGUE_ESPN_SLUG[id] }))
-    .filter(l => l.slug);
+    .map(id => ({ id, slug: leagueSlug(id) }))
+    .filter((l): l is { id: number; slug: string } => !!l.slug);
 
-  let articles: NewsArticle[];
-
-  if (slugs.length === 0) {
-    // No known ESPN slug → fall back to general soccer news
-    const data = await fetchJson(`${ESPN_BASE}/soccer/news?limit=${limit}`);
-    articles = (data.articles ?? []).map((a: any) => mapArticle(a, 'football'));
-  } else {
-    // Fetch per-league in parallel (max 10 articles each)
+  return cached(`football:${[...leagueIds].sort().join(',')}:${limit}`, async () => {
+    if (slugs.length === 0) {
+      // No leagues picked → general soccer news
+      const data = await espnJson(`${ESPN_BASE}/soccer/news?limit=${limit}`);
+      return (data.articles ?? []).map((a: any) => mapArticle(a, 'football'));
+    }
+    // Per-league in parallel (max 10 articles each)
     const results = await Promise.allSettled(
       slugs.map(({ id, slug }) =>
-        fetchJson(`${ESPN_BASE}/soccer/${slug}/news?limit=10`)
-          .then((data: any) =>
-            (data.articles ?? []).map((a: any) => mapArticle(a, 'football', id))
-          )
+        espnJson(`${ESPN_BASE}/soccer/${slug}/news?limit=10`)
+          .then((data: any) => (data.articles ?? []).map((a: any) => mapArticle(a, 'football', id)))
       )
     );
-
-    // Flatten fulfilled results, deduplicate by id, sort newest first
-    const seen = new Set<string>();
-    articles = results
-      .flatMap(r => (r.status === 'fulfilled' ? r.value : []))
-      .filter(a => {
-        if (seen.has(a.id)) return false;
-        seen.add(a.id);
-        return true;
-      })
-      .sort((a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime())
+    return dedupe(results.flatMap(r => (r.status === 'fulfilled' ? r.value : [])))
+      .sort(byNewest)
       .slice(0, limit);
-  }
-
-  cache.set(key, { data: articles, ts: Date.now() });
-  return articles;
+  });
 }
 
 export async function getNewsForPreferences(
-  sports: ('nba' | 'football')[],
+  sports: SportId[],
   leagueIds: number[]
 ): Promise<NewsArticle[]> {
-  const fetches: Promise<NewsArticle[]>[] =
-    sports.length === 0
-      ? [getNbaNews(15), getFootballNews([], 15)]  // no prefs → general mix
-      : [
-          ...(sports.includes('nba') ? [getNbaNews(20)] : []),
-          ...(sports.includes('football') ? [getFootballNews(leagueIds, 30)] : []),
-        ];
+  // No sports picked → a general mix of the most followed ones
+  const wanted: SportId[] = sports.length > 0 ? sports : ['nba', 'football', 'f1', 'nfl'];
+  const perSport = sports.length > 0 ? 20 : 10;
 
-  // Use allSettled so one failing source doesn't kill the whole feed
-  const results = await Promise.allSettled(fetches);
-  const articles = results
-    .flatMap(r => (r.status === 'fulfilled' ? r.value : []))
-    .sort((a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime());
+  // allSettled so one failing source doesn't kill the whole feed
+  const results = await Promise.allSettled(
+    wanted.map(s => (s === 'football' ? getFootballNews(leagueIds, perSport + 10) : getSportNews(s, perSport)))
+  );
+  const articles = dedupe(results.flatMap(r => (r.status === 'fulfilled' ? r.value : []))).sort(byNewest);
 
   if (articles.length === 0) throw new Error('No news available');
   return articles;

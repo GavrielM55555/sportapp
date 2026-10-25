@@ -2,10 +2,12 @@ import { useEffect } from 'react';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { AuthProvider } from '../src/context/AuthContext';
+import { PreferencesProvider } from '../src/hooks/usePreferences';
 
 export default function RootLayout() {
   return (
     <AuthProvider>
+    <PreferencesProvider>
       <StatusBar style="light" />
       <Stack
         screenOptions={{
@@ -20,6 +22,7 @@ export default function RootLayout() {
         <Stack.Screen name="join/[code]" options={{ title: 'Join Group', presentation: 'modal' }} />
         <Stack.Screen name="onboarding" options={{ headerShown: false }} />
       </Stack>
+    </PreferencesProvider>
     </AuthProvider>
   );
 }
