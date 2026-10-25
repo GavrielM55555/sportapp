@@ -96,7 +96,9 @@ export function mapTeamEvent(event: any): TeamGame | null {
     awayScore: status !== 'scheduled' ? Number(away.score) : null,
     status,
     statusDetail: st.type?.shortDetail ?? '',
-    note: comp.notes?.[0]?.headline ?? (event.week?.number ? `Week ${event.week.number}` : undefined),
+    // Playoff games carry a headline ("ALDS - Game 2"); ESPN season type 1 is preseason
+    note: comp.notes?.[0]?.headline
+      ?? (event.season?.type === 1 ? 'Preseason' : event.week?.number ? `Week ${event.week.number}` : undefined),
   };
 }
 
