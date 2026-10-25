@@ -77,11 +77,13 @@ async function scoreFinishedGames(group: Group, finalGames: Game[], allPreds: Ga
   await recomputeGroupTotals(group.id, unscoredPreds.length > 0);
 }
 
-/** YYYY-MM-DD in US Eastern time, n days from today — game dates from the API are ET dates */
-function etDateOffset(n: number): string {
+/** Local YYYY-MM-DD, n days from today — game dates are local tip-off dates */
+function localDateOffset(n: number): string {
   const d = new Date();
   d.setDate(d.getDate() + n);
-  return d.toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+  const mo = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${d.getFullYear()}-${mo}-${day}`;
 }
 
 // ── Season: today's games, predict before tip-off ────────────────────────
@@ -95,9 +97,9 @@ function SeasonPredictions({ group }: { group: Group }) {
   const [selectedGame, setSelectedGame] = useState<Game | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
 
-  // Date range: yesterday → tomorrow in ET (1 API call covers all 3 days)
+  // Date range: yesterday → tomorrow, local (1 API call covers all 3 days)
   function getDateRange(): { start: string; end: string } {
-    return { start: etDateOffset(-1), end: etDateOffset(1) };
+    return { start: localDateOffset(-1), end: localDateOffset(1) };
   }
 
   async function loadData() {

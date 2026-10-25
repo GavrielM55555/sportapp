@@ -45,6 +45,20 @@ function mapTeam(raw: any): Team {
   };
 }
 
+/** YYYY-MM-DD in the device's time zone */
+function localIso(d: Date): string {
+  const mo = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${d.getFullYear()}-${mo}-${day}`;
+}
+
+/** Shift a YYYY-MM-DD string by n days */
+function shiftIso(iso: string, n: number): string {
+  const d = new Date(`${iso}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().split('T')[0];
+}
+
 function mapGame(raw: any): Game {
   const s: string = raw.status ?? '';
   // Only mark live if the status explicitly says a quarter/half/OT is in progress
@@ -52,23 +66,15 @@ function mapGame(raw: any): Game {
   const isFinal = s === 'Final' || s === 'Final/OT';
   const status: Game['status'] = isFinal ? 'final' : isLive ? 'live' : 'scheduled';
 
-  // Parse game time — status may be an ISO timestamp for scheduled games
+  // Tip-off instant: `datetime` is set for all games; scheduled games also carry it in status
+  const tipIso: string | undefined = raw.datetime ?? (s.includes('T') && s.includes('Z') ? s : undefined);
+  const tip = tipIso ? new Date(tipIso) : null;
+  const hasTip = tip !== null && !isNaN(tip.getTime());
+
   let gameTime: string | undefined;
   if (!isFinal && !isLive) {
-    if (s.includes('T') && s.includes('Z')) {
-      // ISO timestamp → convert to local time string
-      try {
-        const d = new Date(s);
-        const localDateStr = d.toLocaleDateString('en-CA'); // YYYY-MM-DD in device tz
-        if (localDateStr !== raw.date) {
-          // Game crosses midnight locally — prefix with weekday so user knows it's a different day
-          const weekday = d.toLocaleDateString('en-US', { weekday: 'short' });
-          const timeStr = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
-          gameTime = `${weekday} ${timeStr}`;
-        } else {
-          gameTime = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
-        }
-      } catch { gameTime = s; }
+    if (hasTip) {
+      gameTime = tip!.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
     } else if (s.length > 0) {
       gameTime = s;
     } else {
@@ -78,7 +84,8 @@ function mapGame(raw: any): Game {
 
   return {
     id: raw.id,
-    date: raw.date,
+    // The API's `date` is the US Eastern date; group by the viewer's local tip-off date instead
+    date: hasTip ? localIso(tip!) : raw.date,
     homeTeam: mapTeam(raw.home_team),
     awayTeam: mapTeam(raw.visitor_team),
     homeScore: raw.home_team_score ?? null,
@@ -128,7 +135,7 @@ async function prewarm() {
   await fetchRange(start, end);
 }
 
-/** Get games for specific dates.
+/** Get games whose local tip-off date falls within the given local dates.
  *  Fetches from cache (prewarmed on first call).
  *  Pass forceRefresh=true to bypass cache and fetch fresh (used for live score updates). */
 export async function getGamesByDates(dates: string[], forceRefresh = false): Promise<Game[]> {
@@ -138,7 +145,8 @@ export async function getGamesByDates(dates: string[], forceRefresh = false): Pr
   const end = sorted[sorted.length - 1];
 
   if (forceRefresh) {
-    const data = await get<{ data: any[] }>('/games', { start_date: start, end_date: end, per_page: 100 });
+    // A local day can span two US Eastern dates, so fetch one extra ET day each side
+    const data = await get<{ data: any[] }>('/games', { start_date: shiftIso(start, -1), end_date: shiftIso(end, 1), per_page: 100 });
     const freshGames = data.data.map(mapGame);
     const prewarmKey = (() => {
       const now = new Date();
@@ -148,10 +156,11 @@ export async function getGamesByDates(dates: string[], forceRefresh = false): Pr
     })();
     const cached = rangeCache.get(prewarmKey);
     if (cached) {
-      const merged = cached.games.filter(g => g.date < start || g.date > end).concat(freshGames);
+      const freshIds = new Set(freshGames.map(g => g.id));
+      const merged = cached.games.filter(g => !freshIds.has(g.id)).concat(freshGames);
       rangeCache.set(prewarmKey, { games: merged, ts: cached.ts });
     }
-    return freshGames;
+    return freshGames.filter(g => g.date >= start && g.date <= end);
   }
 
   // If within prewarmed range, filter from it
@@ -165,7 +174,7 @@ export async function getGamesByDates(dates: string[], forceRefresh = false): Pr
   if (cached) {
     return cached.games.filter(g => g.date >= start && g.date <= end);
   }
-  const games = await fetchRange(start, end);
+  const games = await fetchRange(shiftIso(start, -1), shiftIso(end, 1));
   return games.filter(g => g.date >= start && g.date <= end);
 }
 
