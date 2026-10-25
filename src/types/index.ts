@@ -7,7 +7,13 @@ export interface AppUser {
 }
 
 // ── Groups ─────────────────────────────────────────────
-export type GroupType = 'season' | 'playoff' | 'football';
+// 'season' / 'playoff' are the original NBA types and 'football' is soccer;
+// they keep their names because existing groups store them.
+export type GroupType =
+  | 'season' | 'playoff' | 'football'
+  | 'nfl_season' | 'nfl_playoffs'
+  | 'mlb_season' | 'mlb_playoffs'
+  | 'f1';
 
 export interface Group {
   id: string;

@@ -16,30 +16,11 @@ import { useAuthContext } from '../../src/context/AuthContext';
 import { useGroups } from '../../src/hooks/useGroups';
 import { GroupType } from '../../src/types';
 import { SUPPORTED_LEAGUES } from '../../src/api/apifootball';
-
-const GROUP_TYPES: { type: GroupType; label: string; icon: string; desc: string }[] = [
-  {
-    type: 'season',
-    label: 'NBA Season',
-    icon: '🏀',
-    desc: 'Predict any NBA game before tip-off. Points accumulate all season.',
-  },
-  {
-    type: 'playoff',
-    label: 'NBA Playoffs',
-    icon: '🏆',
-    desc: 'Predict every playoff series before each round starts.',
-  },
-  {
-    type: 'football',
-    label: 'Football',
-    icon: '⚽',
-    desc: 'Predict soccer matches from Premier League, La Liga, Bundesliga and more.',
-  },
-];
+import { GROUP_TYPES, groupTypeDef } from '../../src/groupTypes';
+import { SPORTS } from '../../src/sports';
 
 export default function GroupsScreen() {
-  const { user, logout } = useAuthContext();
+  const { user } = useAuthContext();
   const { groups, loading, createGroup, joinGroupByCode } = useGroups();
   const [showCreate, setShowCreate] = useState(false);
   const [showJoin, setShowJoin] = useState(false);
@@ -117,9 +98,6 @@ export default function GroupsScreen() {
         <TouchableOpacity style={[styles.actionBtn, styles.actionBtnSecondary]} onPress={() => setShowJoin(true)}>
           <Text style={[styles.actionBtnText, styles.actionBtnTextSecondary]}>Join with Code</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={[styles.actionBtn, styles.actionBtnSecondary]} onPress={logout}>
-          <Text style={[styles.actionBtnText, styles.actionBtnTextSecondary]}>Sign Out</Text>
-        </TouchableOpacity>
       </View>
 
       <FlatList
@@ -129,13 +107,11 @@ export default function GroupsScreen() {
           <TouchableOpacity style={styles.groupCard} onPress={() => router.push(`/group/${item.id}`)}>
             <View style={styles.groupInfo}>
               <View style={styles.groupNameRow}>
-                <Text style={styles.groupTypeIcon}>
-                  {item.type === 'playoff' ? '🏆' : item.type === 'football' ? '⚽' : '🏀'}
-                </Text>
+                <Text style={styles.groupTypeIcon}>{groupTypeDef(item.type).icon}</Text>
                 <Text style={styles.groupName}>{item.name}</Text>
               </View>
               <Text style={styles.groupMeta}>
-                {item.type === 'playoff' ? 'NBA Playoffs' : item.type === 'football' ? 'Football' : 'NBA Season'} · {item.members.length} members
+                {groupTypeDef(item.type).label} · {item.members.length} members
               </Text>
               <Text style={styles.groupCode}>Code: {item.inviteCode}</Text>
             </View>
@@ -166,22 +142,28 @@ export default function GroupsScreen() {
               autoFocus
             />
 
-            <Text style={styles.typeLabel}>Group type</Text>
-            <View style={styles.typeRow}>
-              {GROUP_TYPES.map((t) => (
-                <TouchableOpacity
-                  key={t.type}
-                  style={[styles.typeCard, groupType === t.type && styles.typeCardSelected]}
-                  onPress={() => setGroupType(t.type)}
-                >
-                  <Text style={styles.typeIcon}>{t.icon}</Text>
-                  <Text style={[styles.typeName, groupType === t.type && styles.typeNameSelected]}>
-                    {t.label}
-                  </Text>
-                  <Text style={styles.typeDesc}>{t.desc}</Text>
-                </TouchableOpacity>
+            <Text style={styles.typeLabel}>What do you want to predict?</Text>
+            <ScrollView style={{ maxHeight: 300, marginBottom: 16 }} showsVerticalScrollIndicator={false}>
+              {SPORTS.filter(sp => GROUP_TYPES.some(t => t.sport === sp.id)).map(sp => (
+                <View key={sp.id} style={styles.typeSport}>
+                  <Text style={styles.typeSportLabel}>{sp.emoji} {sp.label}</Text>
+                  <View style={styles.typeRow}>
+                    {GROUP_TYPES.filter(t => t.sport === sp.id).map(t => (
+                      <TouchableOpacity
+                        key={t.type}
+                        style={[styles.typeCard, groupType === t.type && styles.typeCardSelected]}
+                        onPress={() => setGroupType(t.type)}
+                      >
+                        <Text style={[styles.typeName, groupType === t.type && styles.typeNameSelected]}>
+                          {t.icon} {t.label}
+                        </Text>
+                        <Text style={styles.typeDesc}>{t.desc}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </View>
               ))}
-            </View>
+            </ScrollView>
 
             {/* League picker — only shown for football groups */}
             {groupType === 'football' && (
@@ -286,7 +268,9 @@ const styles = StyleSheet.create({
     borderRadius: 10, padding: 14, marginBottom: 16,
   },
   typeLabel: { fontSize: 12, color: '#9ca3af', fontWeight: '600', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 10 },
-  typeRow: { flexDirection: 'row', gap: 10, marginBottom: 20 },
+  typeSport: { marginBottom: 12 },
+  typeSportLabel: { fontSize: 13, color: '#fff', fontWeight: '800', marginBottom: 6 },
+  typeRow: { flexDirection: 'row', gap: 10 },
   typeCard: {
     flex: 1, backgroundColor: '#0f1923', borderRadius: 12, padding: 14,
     borderWidth: 2, borderColor: 'transparent', alignItems: 'center',

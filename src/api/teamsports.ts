@@ -28,6 +28,38 @@ export interface TeamGame {
   status: 'scheduled' | 'live' | 'final';
   statusDetail: string;  // e.g. "Q3 4:12", "Bot 7th", "Final/OT"
   note?: string;         // e.g. "Week 8", "World Series - Game 3"
+  seasonType: number;    // ESPN: 1 preseason, 2 regular, 3 postseason
+  round?: PlayoffRoundCode;
+  series?: { completed: boolean; total: number; wins: Record<number, number> };
+}
+
+// ── Playoff rounds ───────────────────────────────────────────────────────
+export type PlayoffRoundCode =
+  | 'nfl_wc' | 'nfl_div' | 'nfl_conf' | 'nfl_sb'
+  | 'mlb_wc' | 'mlb_ds' | 'mlb_cs' | 'mlb_ws';
+
+export const ROUND_INFO: Record<PlayoffRoundCode, { label: string; order: number }> = {
+  nfl_wc:   { label: 'Wild Card',          order: 0 },
+  nfl_div:  { label: 'Divisional',         order: 1 },
+  nfl_conf: { label: 'Conference Finals',  order: 2 },
+  nfl_sb:   { label: 'Super Bowl',         order: 3 },
+  mlb_wc:   { label: 'Wild Card Series',   order: 0 },
+  mlb_ds:   { label: 'Division Series',    order: 1 },
+  mlb_cs:   { label: 'Championship Series', order: 2 },
+  mlb_ws:   { label: 'World Series',       order: 3 },
+};
+
+/** ESPN headlines are messy ("ALCS Rain - Makeup on Oct 18") — map them to a round */
+function roundFromHeadline(h: string): PlayoffRoundCode | undefined {
+  if (/Wild Card Playoffs/i.test(h)) return 'nfl_wc';
+  if (/Divisional Playoffs/i.test(h)) return 'nfl_div';
+  if (/(AFC|NFC) Championship/i.test(h)) return 'nfl_conf';
+  if (/Super Bowl/i.test(h)) return 'nfl_sb';
+  if (/^(AL|NL)WC/i.test(h)) return 'mlb_wc';
+  if (/^(AL|NL)DS/i.test(h)) return 'mlb_ds';
+  if (/^(AL|NL)CS/i.test(h)) return 'mlb_cs';
+  if (/^World Series/i.test(h)) return 'mlb_ws';
+  return undefined; // e.g. Pro Bowl
 }
 
 export interface WinLossRow {
@@ -85,8 +117,18 @@ export function mapTeamEvent(event: any): TeamGame | null {
   const state: string = st.type?.state ?? 'pre';
   const status: TeamGame['status'] =
     state === 'in' ? 'live' : state === 'post' && st.type?.completed ? 'final' : 'scheduled';
+  const seasonType = Number(event.season?.type ?? 2);
+  const headline: string = comp.notes?.[0]?.headline ?? '';
+  const series = comp.series?.type === 'playoff' ? {
+    completed: !!comp.series.completed,
+    total: Number(comp.series.totalCompetitions ?? 0),
+    wins: Object.fromEntries((comp.series.competitors ?? []).map((c: any) => [Number(c.id), Number(c.wins ?? 0)])),
+  } : undefined;
 
   return {
+    seasonType,
+    round: seasonType === 3 ? roundFromHeadline(headline) : undefined,
+    series,
     id: Number(event.id),
     date: localIso(new Date(event.date)),
     kickoff: event.date,
@@ -120,6 +162,76 @@ export async function getTeamGames(league: TeamLeague, date: string, force = fal
       return true;
     })
     .sort((a, b) => a.kickoff.localeCompare(b.kickoff));
+}
+
+/** Season year a league is in now: NFL seasons run Sep–Feb, MLB Mar–Nov */
+export function currentSeasonYear(league: TeamLeague): number {
+  const now = new Date();
+  return league.key === 'nfl' && now.getMonth() < 6 ? now.getFullYear() - 1 : now.getFullYear();
+}
+
+/** Every postseason game of a season (playoff rounds only, no Pro Bowl).
+ *  ESPN rejects date ranges but accepts whole months. */
+export async function getPostseason(league: TeamLeague, seasonYear: number, force = false): Promise<TeamGame[]> {
+  const months = league.key === 'nfl'
+    ? [`${seasonYear + 1}01`, `${seasonYear + 1}02`]
+    : [`${seasonYear}09`, `${seasonYear}10`, `${seasonYear}11`];
+  const results = await Promise.allSettled(
+    months.map(m => get(`${SITE}/${league.path}/scoreboard?dates=${m}&limit=500`, force))
+  );
+  const seen = new Set<number>();
+  return results
+    .flatMap(r => (r.status === 'fulfilled' ? r.value.events ?? [] : []))
+    .map(mapTeamEvent)
+    .filter((g): g is TeamGame => {
+      if (!g || !g.round || seen.has(g.id)) return false;
+      seen.add(g.id);
+      return true;
+    })
+    .sort((a, b) => a.kickoff.localeCompare(b.kickoff));
+}
+
+export interface TeamSeries {
+  id: string;                 // `${round}-${lowTeamId}-${highTeamId}`
+  round: PlayoffRoundCode;
+  teams: [TeamGame['homeTeam'], TeamGame['homeTeam']];
+  games: TeamGame[];
+  bestOf: number;
+  wins: Record<number, number>;
+  winnerId?: number;
+  start: string;              // first game's start — picks lock here
+}
+
+/** Group MLB postseason games into series (one per round per team pair) */
+export function groupTeamSeries(games: TeamGame[]): TeamSeries[] {
+  const map = new Map<string, TeamSeries>();
+  for (const g of games) {
+    if (!g.round) continue;
+    const ids = [g.homeTeam.id, g.awayTeam.id].sort((a, b) => a - b);
+    const id = `${g.round}-${ids[0]}-${ids[1]}`;
+    let s = map.get(id);
+    if (!s) {
+      const first = g.homeTeam.id === ids[0] ? [g.homeTeam, g.awayTeam] : [g.awayTeam, g.homeTeam];
+      s = { id, round: g.round, teams: first as TeamSeries['teams'], games: [], bestOf: 0, wins: {}, start: g.kickoff };
+      map.set(id, s);
+    }
+    s.games.push(g);
+    s.bestOf = Math.max(s.bestOf, g.series?.total ?? 0);
+  }
+  for (const s of map.values()) {
+    // Count wins from final games (ESPN's per-game series object can lag)
+    s.wins = { [s.teams[0].id]: 0, [s.teams[1].id]: 0 };
+    for (const g of s.games) {
+      if (g.status !== 'final' || g.homeScore === null || g.awayScore === null) continue;
+      const w = g.homeScore > g.awayScore ? g.homeTeam.id : g.awayTeam.id;
+      s.wins[w] = (s.wins[w] ?? 0) + 1;
+    }
+    const need = Math.ceil((s.bestOf || 7) / 2);
+    s.winnerId = s.teams.find(t => s.wins[t.id] >= need)?.id;
+    s.games.sort((a, b) => a.kickoff.localeCompare(b.kickoff));
+    s.start = s.games[0].kickoff;
+  }
+  return [...map.values()].sort((a, b) => ROUND_INFO[a.round].order - ROUND_INFO[b.round].order || a.start.localeCompare(b.start));
 }
 
 /** Win/loss standings, one table per conference / league (AFC/NFC, AL/NL) */

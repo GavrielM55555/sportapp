@@ -11,6 +11,9 @@ export const SCORED_COLLECTIONS = [
   'playoff_bonus_picks',
   'playoff_r3_bonus_picks',
   'playoff_r4_bonus_picks',
+  'team_predictions',   // NFL / MLB games and series
+  'f1_predictions',     // F1 race podiums
+  'f1_season_picks',    // F1 drivers' + constructors' champions
 ];
 
 // Groups already recomputed this app session

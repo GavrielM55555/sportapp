@@ -92,6 +92,27 @@ service cloud.firestore {
       allow delete: if canDeletePick();
     }
 
+    match /team_predictions/{pickId} {       // NFL/MLB: MLB World Series winner + games
+      allow read: if signedIn();
+      allow create: if canCreatePick();
+      allow update: if canEditOwnPick() || canScorePick(8);
+      allow delete: if canDeletePick();
+    }
+
+    match /f1_predictions/{pickId} {         // F1 podium: 3 × 3 pts
+      allow read: if signedIn();
+      allow create: if canCreatePick();
+      allow update: if canEditOwnPick() || canScorePick(9);
+      allow delete: if canDeletePick();
+    }
+
+    match /f1_season_picks/{pickId} {        // F1 drivers' + constructors' champions
+      allow read: if signedIn();
+      allow create: if canCreatePick();
+      allow update: if canEditOwnPick() || canScorePick(20);
+      allow delete: if canDeletePick();
+    }
+
     // ── Users ──────────────────────────────────────────────────────────────
 
     match /users/{userId} {

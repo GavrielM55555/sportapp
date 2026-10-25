@@ -18,15 +18,26 @@ import { getFootballGamesByDate, SUPPORTED_LEAGUES, FootballGame } from '../api/
 import { PredictGameModal } from './PredictGameModal';
 import { PredictSeriesModal } from './PredictSeriesModal';
 import { useAuthContext } from '../context/AuthContext';
+import { TEAM_LEAGUES } from '../api/teamsports';
+import { TeamSeasonPredictions } from './predict/TeamSeasonPredictions';
+import { TeamPlayoffPredictions } from './predict/TeamPlayoffPredictions';
+import { F1Predictions } from './predict/F1Predictions';
 
 interface Props {
   group: Group;
 }
 
 export function GroupPredictionsTab({ group }: Props) {
-  if (group.type === 'season') return <SeasonPredictions group={group} />;
-  if (group.type === 'football') return <FootballPredictions group={group} />;
-  return <PlayoffPredictions group={group} />;
+  switch (group.type) {
+    case 'season': return <SeasonPredictions group={group} />;
+    case 'football': return <FootballPredictions group={group} />;
+    case 'f1': return <F1Predictions group={group} />;
+    case 'nfl_season': return <TeamSeasonPredictions group={group} league={TEAM_LEAGUES.nfl} />;
+    case 'mlb_season': return <TeamSeasonPredictions group={group} league={TEAM_LEAGUES.mlb} />;
+    case 'nfl_playoffs': return <TeamPlayoffPredictions group={group} league={TEAM_LEAGUES.nfl} />;
+    case 'mlb_playoffs': return <TeamPlayoffPredictions group={group} league={TEAM_LEAGUES.mlb} />;
+    default: return <PlayoffPredictions group={group} />;
+  }
 }
 
 // ── Simple in-memory cache for game fetches (avoids re-fetching on re-renders) ─
@@ -394,29 +405,6 @@ function PlayoffPredictions({ group }: { group: Group }) {
   const [showChampModal, setShowChampModal] = useState(false);
   const [savingChamp, setSavingChamp] = useState(false);
 
-  // Round 2 OT bonus state
-  const [otPicks, setOtPicks] = useState<{ id: string; uid: string; otGames: number; pointsEarned?: number }[]>([]);
-  const [showOtModal, setShowOtModal] = useState(false);
-  const [otInput, setOtInput] = useState('0');
-  const [savingOt, setSavingOt] = useState(false);
-
-  // Round 3 point-diff bonus state
-  const [r3Picks, setR3Picks] = useState<{ id: string; uid: string; pointDiff: number; pointsEarned?: number }[]>([]);
-  const [showR3Modal, setShowR3Modal] = useState(false);
-  const [r3Input, setR3Input] = useState('1');
-  const [savingR3, setSavingR3] = useState(false);
-  const [showR3ScoreModal, setShowR3ScoreModal] = useState(false);
-  const [r3ActualInput, setR3ActualInput] = useState('1');
-  const [savingR3Score, setSavingR3Score] = useState(false);
-
-  // Round 4 (Finals) Wemby blocks bonus state
-  const [r4Picks, setR4Picks] = useState<{ id: string; uid: string; wembyBlocks: number; pointsEarned?: number }[]>([]);
-  const [showR4Modal, setShowR4Modal] = useState(false);
-  const [r4Input, setR4Input] = useState('');
-  const [savingR4, setSavingR4] = useState(false);
-  const [showR4ScoreModal, setShowR4ScoreModal] = useState(false);
-  const [r4ActualInput, setR4ActualInput] = useState('');
-  const [savingR4Score, setSavingR4Score] = useState(false);
 
   const silentReload = React.useCallback(async () => {
     if (!user) return;
@@ -476,35 +464,6 @@ function PlayoffPredictions({ group }: { group: Group }) {
           scoringWrites++;
         }
 
-        // Load Round 2 OT picks
-        const otSnap = await getDocs(query(
-          collection(db, 'playoff_bonus_picks'),
-          where('groupId', '==', group.id)
-        ));
-        const fetchedOtPicks = otSnap.docs.map(d => ({ id: d.id, ...d.data() } as { id: string; uid: string; otGames: number; pointsEarned?: number }));
-        setOtPicks(fetchedOtPicks);
-
-        // Load Round 3 point-diff picks
-        const r3Snap = await getDocs(query(collection(db, 'playoff_r3_bonus_picks'), where('groupId', '==', group.id)));
-        const fetchedR3Picks = r3Snap.docs.map(d => ({ id: d.id, ...d.data() } as { id: string; uid: string; pointDiff: number; pointsEarned?: number }));
-        setR3Picks(fetchedR3Picks);
-
-        // Load Round 4 (Finals) Wemby blocks picks
-        const r4Snap = await getDocs(query(collection(db, 'playoff_r4_bonus_picks'), where('groupId', '==', group.id)));
-        const fetchedR4Picks = r4Snap.docs.map(d => ({ id: d.id, ...d.data() } as { id: string; uid: string; wembyBlocks: number; pointsEarned?: number }));
-        setR4Picks(fetchedR4Picks);
-
-        // Auto-score Round 2 OT bonus when Round 2 is complete
-        const r2 = rounds[1] ?? [];
-        const r2Complete = r2.length === 4 && r2.every(s => s.isComplete);
-        if (r2Complete) {
-          const ACTUAL_R2_OT = 1; // CLE vs DET Game 5 confirmed only OT game in R2
-          for (const pick of fetchedOtPicks.filter(p => p.pointsEarned === undefined)) {
-            scoringBatch.update(doc(db, 'playoff_bonus_picks', pick.id), { pointsEarned: pick.otGames === ACTUAL_R2_OT ? 4 : 0 });
-            scoringWrites++;
-          }
-        }
-
         // A scoring failure shouldn't hide the bracket
         try {
           if (scoringWrites > 0) await scoringBatch.commit();
@@ -514,14 +473,12 @@ function PlayoffPredictions({ group }: { group: Group }) {
         }
 
         if (scoringWrites > 0) {
-          const [seriesSnap, champSnap2, otSnap2] = await Promise.all([
+          const [seriesSnap, champSnap2] = await Promise.all([
             getDocs(query(collection(db, 'series_predictions'), where('groupId', '==', group.id))),
             getDocs(query(collection(db, 'championship_picks'), where('groupId', '==', group.id))),
-            getDocs(query(collection(db, 'playoff_bonus_picks'), where('groupId', '==', group.id))),
           ]);
           setAllPredictions(seriesSnap.docs.map(d => ({ id: d.id, ...d.data() } as SeriesPrediction)));
           setChampPicks(champSnap2.docs.map(d => ({ id: d.id, ...d.data() } as { id: string; uid: string; teamId: number; teamAbbr: string; pointsEarned?: number })));
-          setOtPicks(otSnap2.docs.map(d => ({ id: d.id, ...d.data() } as { id: string; uid: string; otGames: number; pointsEarned?: number })));
         } else {
           setAllPredictions(preds);
           setChampPicks(fetchedChampPicks);
@@ -587,112 +544,6 @@ function PlayoffPredictions({ group }: { group: Group }) {
     }
   };
 
-
-  const saveOtPick = async () => {
-    if (!user) return;
-    setSavingOt(true);
-    try {
-      const val = Math.max(0, parseInt(otInput) || 0);
-      const pick = { uid: user.uid, groupId: group.id, season: String(currentNBASeason()), otGames: val, submittedAt: Date.now() };
-      const existing = await getDocs(query(
-        collection(db, 'playoff_bonus_picks'),
-        where('uid', '==', user.uid),
-        where('groupId', '==', group.id)
-      ));
-      if (!existing.empty) {
-        await updateDoc(doc(db, 'playoff_bonus_picks', existing.docs[0].id), pick);
-      } else {
-        await addDoc(collection(db, 'playoff_bonus_picks'), pick);
-      }
-      const snap = await getDocs(query(collection(db, 'playoff_bonus_picks'), where('groupId', '==', group.id)));
-      setOtPicks(snap.docs.map(d => ({ id: d.id, ...d.data() } as { id: string; uid: string; otGames: number; pointsEarned?: number })));
-      setShowOtModal(false);
-    } finally {
-      setSavingOt(false);
-    }
-  };
-
-  const saveR3Pick = async () => {
-    if (!user) return;
-    setSavingR3(true);
-    try {
-      const val = Math.max(1, parseInt(r3Input) || 1);
-      const pick = { uid: user.uid, groupId: group.id, season: String(currentNBASeason()), pointDiff: val, submittedAt: Date.now() };
-      const existing = await getDocs(query(collection(db, 'playoff_r3_bonus_picks'), where('uid', '==', user.uid), where('groupId', '==', group.id)));
-      if (!existing.empty) {
-        await updateDoc(doc(db, 'playoff_r3_bonus_picks', existing.docs[0].id), pick);
-      } else {
-        await addDoc(collection(db, 'playoff_r3_bonus_picks'), pick);
-      }
-      const snap = await getDocs(query(collection(db, 'playoff_r3_bonus_picks'), where('groupId', '==', group.id)));
-      setR3Picks(snap.docs.map(d => ({ id: d.id, ...d.data() } as { id: string; uid: string; pointDiff: number; pointsEarned?: number })));
-      setShowR3Modal(false);
-    } finally {
-      setSavingR3(false);
-    }
-  };
-
-  const saveR4Pick = async () => {
-    if (!user) return;
-    setSavingR4(true);
-    try {
-      const val = Math.max(0, parseInt(r4Input) || 0);
-      const pick = { uid: user.uid, groupId: group.id, season: String(currentNBASeason()), wembyBlocks: val, submittedAt: Date.now() };
-      const existing = await getDocs(query(collection(db, 'playoff_r4_bonus_picks'), where('uid', '==', user.uid), where('groupId', '==', group.id)));
-      if (!existing.empty) {
-        await updateDoc(doc(db, 'playoff_r4_bonus_picks', existing.docs[0].id), pick);
-      } else {
-        await addDoc(collection(db, 'playoff_r4_bonus_picks'), pick);
-      }
-      const snap = await getDocs(query(collection(db, 'playoff_r4_bonus_picks'), where('groupId', '==', group.id)));
-      setR4Picks(snap.docs.map(d => ({ id: d.id, ...d.data() } as { id: string; uid: string; wembyBlocks: number; pointsEarned?: number })));
-      setShowR4Modal(false);
-    } finally {
-      setSavingR4(false);
-    }
-  };
-
-  const scoreR4Bonus = async () => {
-    setSavingR4Score(true);
-    try {
-      const actualBlocks = Math.max(0, parseInt(r4ActualInput) || 0);
-      const unscored = r4Picks.filter(p => p.pointsEarned === undefined);
-      if (unscored.length > 0) {
-        const batch = writeBatch(db);
-        for (const pick of unscored) {
-          batch.update(doc(db, 'playoff_r4_bonus_picks', pick.id), { pointsEarned: pick.wembyBlocks === actualBlocks ? 4 : 0 });
-        }
-        await batch.commit();
-        await recomputeGroupTotals(group.id);
-        const snap = await getDocs(query(collection(db, 'playoff_r4_bonus_picks'), where('groupId', '==', group.id)));
-        setR4Picks(snap.docs.map(d => ({ id: d.id, ...d.data() } as { id: string; uid: string; wembyBlocks: number; pointsEarned?: number })));
-      }
-      setShowR4ScoreModal(false);
-    } finally {
-      setSavingR4Score(false);
-    }
-  };
-
-  const scoreR3Bonus = async () => {
-    setSavingR3Score(true);
-    try {
-      const actualDiff = Math.max(1, parseInt(r3ActualInput) || 1);
-      const unscored = r3Picks.filter(p => p.pointsEarned === undefined);
-      if (unscored.length > 0) {
-        const batch = writeBatch(db);
-        for (const pick of unscored) {
-          batch.update(doc(db, 'playoff_r3_bonus_picks', pick.id), { pointsEarned: pick.pointDiff === actualDiff ? 4 : 0 });
-        }
-        await batch.commit();
-        await recomputeGroupTotals(group.id);
-        const snap = await getDocs(query(collection(db, 'playoff_r3_bonus_picks'), where('groupId', '==', group.id)));
-        setR3Picks(snap.docs.map(d => ({ id: d.id, ...d.data() } as { id: string; uid: string; pointDiff: number; pointsEarned?: number })));
-      }
-      setShowR3ScoreModal(false);
-    } finally {
-      setSavingR3Score(false);
-    }
-  };
 
   return (
     <ScrollView contentContainerStyle={{ paddingBottom: 40 }}>
@@ -793,172 +644,6 @@ function PlayoffPredictions({ group }: { group: Group }) {
       </Modal>
 
 
-      {/* ── Round 2 OT Modal ── */}
-      <Modal visible={showOtModal} transparent animationType="slide">
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalBox}>
-            <Text style={styles.modalTitle}>⏱️ Round 2 OT Games</Text>
-            <Text style={styles.modalSubtitle}>How many games in Round 2 will go to overtime?</Text>
-            <Text style={[styles.modalSubtitle, { marginTop: 4 }]}>Exact answer = 4 pts · Locks when Round 2 tips off</Text>
-            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 24, marginVertical: 24 }}>
-              <TouchableOpacity
-                style={{ backgroundColor: '#1e2d3d', width: 48, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center' }}
-                onPress={() => setOtInput(v => String(Math.max(0, parseInt(v) - 1)))}
-              >
-                <Text style={{ color: '#fff', fontSize: 28, fontWeight: '300', lineHeight: 32 }}>−</Text>
-              </TouchableOpacity>
-              <Text style={{ color: '#fff', fontSize: 40, fontWeight: '800', minWidth: 52, textAlign: 'center' }}>{otInput}</Text>
-              <TouchableOpacity
-                style={{ backgroundColor: '#1e2d3d', width: 48, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center' }}
-                onPress={() => setOtInput(v => String(parseInt(v) + 1))}
-              >
-                <Text style={{ color: '#fff', fontSize: 28, fontWeight: '300', lineHeight: 32 }}>+</Text>
-              </TouchableOpacity>
-            </View>
-            <TouchableOpacity
-              style={[styles.modalBtn, { backgroundColor: '#8b5cf6' }, savingOt && { opacity: 0.5 }]}
-              onPress={saveOtPick}
-              disabled={savingOt}
-            >
-              <Text style={{ color: '#fff', fontWeight: '800', fontSize: 15 }}>{savingOt ? 'Saving...' : 'Lock In Pick'}</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={[styles.modalBtn, { backgroundColor: '#1e2d3d', marginTop: 8 }]} onPress={() => setShowOtModal(false)}>
-              <Text style={{ color: '#9ca3af', fontWeight: '700' }}>Cancel</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
-
-      {/* ── Round 3 Pick Modal ── */}
-      <Modal visible={showR3Modal} transparent animationType="slide">
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalBox}>
-            <Text style={styles.modalTitle}>📏 Biggest Point Diff</Text>
-            <Text style={styles.modalSubtitle}>What will be the biggest point difference in a single Conf Finals game?</Text>
-            <Text style={[styles.modalSubtitle, { marginTop: 4 }]}>Exact answer = 4 pts · Locks when Conf Finals tips off</Text>
-            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 24, marginVertical: 24 }}>
-              <TouchableOpacity
-                style={{ backgroundColor: '#1e2d3d', width: 48, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center' }}
-                onPress={() => setR3Input(v => String(Math.max(1, parseInt(v) - 1)))}
-              >
-                <Text style={{ color: '#fff', fontSize: 28, fontWeight: '300', lineHeight: 32 }}>−</Text>
-              </TouchableOpacity>
-              <Text style={{ color: '#fff', fontSize: 40, fontWeight: '800', minWidth: 64, textAlign: 'center' }}>{r3Input}</Text>
-              <TouchableOpacity
-                style={{ backgroundColor: '#1e2d3d', width: 48, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center' }}
-                onPress={() => setR3Input(v => String(parseInt(v) + 1))}
-              >
-                <Text style={{ color: '#fff', fontSize: 28, fontWeight: '300', lineHeight: 32 }}>+</Text>
-              </TouchableOpacity>
-            </View>
-            <TouchableOpacity
-              style={[styles.modalBtn, { backgroundColor: '#8b5cf6' }, savingR3 && { opacity: 0.5 }]}
-              onPress={saveR3Pick}
-              disabled={savingR3}
-            >
-              <Text style={{ color: '#fff', fontWeight: '800', fontSize: 15 }}>{savingR3 ? 'Saving...' : 'Lock In Pick'}</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={[styles.modalBtn, { backgroundColor: '#1e2d3d', marginTop: 8 }]} onPress={() => setShowR3Modal(false)}>
-              <Text style={{ color: '#9ca3af', fontWeight: '700' }}>Cancel</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
-
-      {/* ── Round 3 Admin Score Modal ── */}
-      <Modal visible={showR3ScoreModal} transparent animationType="slide">
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalBox}>
-            <Text style={styles.modalTitle}>📏 Enter Actual Result</Text>
-            <Text style={styles.modalSubtitle}>What was the biggest point difference in a Conf Finals game?</Text>
-            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 24, marginVertical: 24 }}>
-              <TouchableOpacity
-                style={{ backgroundColor: '#1e2d3d', width: 48, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center' }}
-                onPress={() => setR3ActualInput(v => String(Math.max(1, parseInt(v) - 1)))}
-              >
-                <Text style={{ color: '#fff', fontSize: 28, fontWeight: '300', lineHeight: 32 }}>−</Text>
-              </TouchableOpacity>
-              <Text style={{ color: '#fff', fontSize: 40, fontWeight: '800', minWidth: 64, textAlign: 'center' }}>{r3ActualInput}</Text>
-              <TouchableOpacity
-                style={{ backgroundColor: '#1e2d3d', width: 48, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center' }}
-                onPress={() => setR3ActualInput(v => String(parseInt(v) + 1))}
-              >
-                <Text style={{ color: '#fff', fontSize: 28, fontWeight: '300', lineHeight: 32 }}>+</Text>
-              </TouchableOpacity>
-            </View>
-            <TouchableOpacity
-              style={[styles.modalBtn, { backgroundColor: '#1e40af' }, savingR3Score && { opacity: 0.5 }]}
-              onPress={scoreR3Bonus}
-              disabled={savingR3Score}
-            >
-              <Text style={{ color: '#fff', fontWeight: '800', fontSize: 15 }}>{savingR3Score ? 'Scoring...' : 'Score Everyone'}</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={[styles.modalBtn, { backgroundColor: '#1e2d3d', marginTop: 8 }]} onPress={() => setShowR3ScoreModal(false)}>
-              <Text style={{ color: '#9ca3af', fontWeight: '700' }}>Cancel</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
-
-      {/* ── Round 4 Wemby Pick Modal ── */}
-      <Modal visible={showR4Modal} transparent animationType="slide">
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalBox}>
-            <Text style={styles.modalTitle}>🛡️ Wemby Blocks</Text>
-            <Text style={styles.modalSubtitle}>How many blocks will Wemby have in the entire Finals series?</Text>
-            <Text style={[styles.modalSubtitle, { marginTop: 4 }]}>Exact answer = 4 pts · Locks when Finals tips off</Text>
-            <TextInput
-              style={[styles.bonusInput, { fontSize: 40, fontWeight: '800', textAlign: 'center', marginVertical: 24, paddingVertical: 16 }]}
-              keyboardType="numeric"
-              value={r4Input}
-              onChangeText={setR4Input}
-              placeholder="?"
-              placeholderTextColor="#4b5563"
-              maxLength={3}
-            />
-            <TouchableOpacity
-              style={[styles.modalBtn, { backgroundColor: '#8b5cf6' }, (savingR4 || !r4Input) && { opacity: 0.5 }]}
-              onPress={saveR4Pick}
-              disabled={savingR4 || !r4Input}
-            >
-              <Text style={{ color: '#fff', fontWeight: '800', fontSize: 15 }}>{savingR4 ? 'Saving...' : 'Lock In Pick'}</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={[styles.modalBtn, { backgroundColor: '#1e2d3d', marginTop: 8 }]} onPress={() => setShowR4Modal(false)}>
-              <Text style={{ color: '#9ca3af', fontWeight: '700' }}>Cancel</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
-
-      {/* ── Round 4 Admin Score Modal ── */}
-      <Modal visible={showR4ScoreModal} transparent animationType="slide">
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalBox}>
-            <Text style={styles.modalTitle}>🛡️ Enter Actual Blocks</Text>
-            <Text style={styles.modalSubtitle}>How many blocks did Wemby have in the Finals series?</Text>
-            <TextInput
-              style={[styles.bonusInput, { fontSize: 40, fontWeight: '800', textAlign: 'center', marginVertical: 24, paddingVertical: 16 }]}
-              keyboardType="numeric"
-              value={r4ActualInput}
-              onChangeText={setR4ActualInput}
-              placeholder="?"
-              placeholderTextColor="#4b5563"
-              maxLength={3}
-            />
-            <TouchableOpacity
-              style={[styles.modalBtn, { backgroundColor: '#1e40af' }, (savingR4Score || !r4ActualInput) && { opacity: 0.5 }]}
-              onPress={scoreR4Bonus}
-              disabled={savingR4Score || !r4ActualInput}
-            >
-              <Text style={{ color: '#fff', fontWeight: '800', fontSize: 15 }}>{savingR4Score ? 'Scoring...' : 'Score Everyone'}</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={[styles.modalBtn, { backgroundColor: '#1e2d3d', marginTop: 8 }]} onPress={() => setShowR4ScoreModal(false)}>
-              <Text style={{ color: '#9ca3af', fontWeight: '700' }}>Cancel</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
-
       {[...rounds].reverse().map((roundSeries, displayIndex) => {
         const roundIndex = rounds.length - 1 - displayIndex;
         const label = ROUND_LABELS[roundIndex] ?? `Round ${roundIndex + 1}`;
@@ -1002,200 +687,6 @@ function PlayoffPredictions({ group }: { group: Group }) {
                 </View>
               </View>
             )}
-
-            {/* Round 2 OT bonus card — sits at top of Round 2 section */}
-            {roundIndex === 1 && (() => {
-              const r2Started = roundStarted;
-              const r2Complete = roundComplete;
-              const actualOt = r2Complete
-                ? roundSeries.flatMap(s => s.games).filter(g => g.status === 'final' && g.isOT).length
-                : null;
-              const myOtPick = otPicks.find(p => p.uid === user?.uid);
-              return (
-                <View style={styles.bonusSection}>
-                  <View style={styles.bonusHeader}>
-                    <Text style={styles.bonusTitleText}>⏱️ Round 2 — OT Games</Text>
-                    <Text style={styles.bonusSubText}>
-                      {r2Complete
-                        ? `Round 2 finished — ${actualOt} OT game${actualOt !== 1 ? 's' : ''}`
-                        : r2Started
-                          ? 'Locked — Round 2 in progress'
-                          : 'How many games go to overtime? · 4 pts exact · Locks when Round 2 tips off'}
-                    </Text>
-                  </View>
-                  {r2Started && otPicks.length > 0 && (
-                    <View style={styles.bonusTable}>
-                      {group.members.map(member => {
-                        const pick = otPicks.find(p => p.uid === member.uid);
-                        const correct = r2Complete && pick != null && pick.otGames === actualOt;
-                        return (
-                          <View key={member.uid} style={styles.bonusTableRow}>
-                            <Text style={[styles.bonusCol, { flex: 2, color: '#d1d5db', textAlign: 'left' }]}>{member.displayName}</Text>
-                            <Text style={[styles.bonusCol, { flex: 2, color: pick != null ? '#f97316' : '#4b5563' }]}>
-                              {pick != null ? `${pick.otGames} OT` : '–'}
-                            </Text>
-                            {r2Complete && (
-                              <Text style={[styles.bonusCol, { color: correct ? '#22c55e' : '#ef4444' }]}>
-                                {pick != null ? (correct ? '+4 pts' : '+0 pts') : '–'}
-                              </Text>
-                            )}
-                          </View>
-                        );
-                      })}
-                    </View>
-                  )}
-                  {!r2Started && (
-                    <TouchableOpacity
-                      style={styles.bonusBtn}
-                      onPress={() => { setOtInput(myOtPick != null ? String(myOtPick.otGames) : '0'); setShowOtModal(true); }}
-                    >
-                      <Text style={styles.bonusBtnText}>
-                        {myOtPick != null ? `My pick: ${myOtPick.otGames} OT games · Change` : 'Make your pick'}
-                      </Text>
-                    </TouchableOpacity>
-                  )}
-                  {r2Started && myOtPick != null && !r2Complete && (
-                    <Text style={[styles.bonusSubText, { paddingHorizontal: 0, paddingBottom: 4 }]}>
-                      Your pick: <Text style={{ color: '#f97316', fontWeight: '700' }}>{myOtPick.otGames} OT games</Text>
-                    </Text>
-                  )}
-                </View>
-              );
-            })()}
-
-            {/* Round 3 point-diff bonus card */}
-            {roundIndex === 2 && (() => {
-              const r3Started = roundStarted;
-              const r3Complete = roundComplete;
-              const myR3Pick = r3Picks.find(p => p.uid === user?.uid);
-              const isAdmin = user?.uid === group.adminUid;
-              const allScored = r3Picks.length > 0 && r3Picks.every(p => p.pointsEarned !== undefined);
-              return (
-                <View style={styles.bonusSection}>
-                  <View style={styles.bonusHeader}>
-                    <Text style={styles.bonusTitleText}>📏 Conf Finals — Biggest Point Diff</Text>
-                    <Text style={styles.bonusSubText}>
-                      {r3Started
-                        ? 'Locked — Conf Finals in progress'
-                        : 'What will be the biggest point difference in a single game? · 4 pts exact · Locks when Conf Finals tips off'}
-                    </Text>
-                  </View>
-
-                  {r3Started && r3Picks.length > 0 && (
-                    <View style={styles.bonusTable}>
-                      {group.members.map(member => {
-                        const pick = r3Picks.find(p => p.uid === member.uid);
-                        const correct = allScored && pick != null && pick.pointsEarned! > 0;
-                        return (
-                          <View key={member.uid} style={styles.bonusTableRow}>
-                            <Text style={[styles.bonusCol, { flex: 2, color: '#d1d5db', textAlign: 'left' }]}>{member.displayName}</Text>
-                            <Text style={[styles.bonusCol, { flex: 2, color: pick != null ? '#f97316' : '#4b5563' }]}>
-                              {pick != null ? `${pick.pointDiff} pts` : '–'}
-                            </Text>
-                            {allScored && (
-                              <Text style={[styles.bonusCol, { color: correct ? '#22c55e' : '#ef4444' }]}>
-                                {pick != null ? (correct ? '+4 pts' : '+0 pts') : '–'}
-                              </Text>
-                            )}
-                          </View>
-                        );
-                      })}
-                    </View>
-                  )}
-
-                  {!r3Started && (
-                    <TouchableOpacity
-                      style={styles.bonusBtn}
-                      onPress={() => { setR3Input(myR3Pick != null ? String(myR3Pick.pointDiff) : '1'); setShowR3Modal(true); }}
-                    >
-                      <Text style={styles.bonusBtnText}>
-                        {myR3Pick != null ? `My pick: ${myR3Pick.pointDiff} pts · Change` : 'Make your pick'}
-                      </Text>
-                    </TouchableOpacity>
-                  )}
-                  {r3Started && myR3Pick != null && !allScored && (
-                    <Text style={[styles.bonusSubText, { paddingHorizontal: 0, paddingBottom: 4 }]}>
-                      Your pick: <Text style={{ color: '#f97316', fontWeight: '700' }}>{myR3Pick.pointDiff} pts</Text>
-                    </Text>
-                  )}
-                  {isAdmin && r3Started && r3Complete && !allScored && (
-                    <TouchableOpacity
-                      style={[styles.bonusBtn, { backgroundColor: '#1e40af', marginTop: 8 }]}
-                      onPress={() => setShowR3ScoreModal(true)}
-                    >
-                      <Text style={styles.bonusBtnText}>Admin: Enter actual result</Text>
-                    </TouchableOpacity>
-                  )}
-                </View>
-              );
-            })()}
-
-            {/* Round 4 (Finals) Wemby blocks bonus card */}
-            {roundIndex === 3 && (() => {
-              const r4Started = roundStarted;
-              const r4Complete = roundComplete;
-              const myR4Pick = r4Picks.find(p => p.uid === user?.uid);
-              const isAdmin = user?.uid === group.adminUid;
-              const allScored = r4Picks.length > 0 && r4Picks.every(p => p.pointsEarned !== undefined);
-              return (
-                <View style={styles.bonusSection}>
-                  <View style={styles.bonusHeader}>
-                    <Text style={styles.bonusTitleText}>🛡️ Finals — Wemby Blocks</Text>
-                    <Text style={styles.bonusSubText}>
-                      {r4Started
-                        ? 'Locked — Finals in progress'
-                        : 'How many blocks will Wemby have in the entire Finals series? · 4 pts exact · Locks when Finals tips off'}
-                    </Text>
-                  </View>
-
-                  {r4Started && r4Picks.length > 0 && (
-                    <View style={styles.bonusTable}>
-                      {group.members.map(member => {
-                        const pick = r4Picks.find(p => p.uid === member.uid);
-                        const correct = allScored && pick != null && pick.pointsEarned! > 0;
-                        return (
-                          <View key={member.uid} style={styles.bonusTableRow}>
-                            <Text style={[styles.bonusCol, { flex: 2, color: '#d1d5db', textAlign: 'left' }]}>{member.displayName}</Text>
-                            <Text style={[styles.bonusCol, { flex: 2, color: pick != null ? '#f97316' : '#4b5563' }]}>
-                              {pick != null ? `${pick.wembyBlocks} blk` : '–'}
-                            </Text>
-                            {allScored && (
-                              <Text style={[styles.bonusCol, { color: correct ? '#22c55e' : '#ef4444' }]}>
-                                {pick != null ? (correct ? '+4 pts' : '+0 pts') : '–'}
-                              </Text>
-                            )}
-                          </View>
-                        );
-                      })}
-                    </View>
-                  )}
-
-                  {!r4Started && (
-                    <TouchableOpacity
-                      style={styles.bonusBtn}
-                      onPress={() => { setR4Input(myR4Pick != null ? String(myR4Pick.wembyBlocks) : ''); setShowR4Modal(true); }}
-                    >
-                      <Text style={styles.bonusBtnText}>
-                        {myR4Pick != null ? `My pick: ${myR4Pick.wembyBlocks} blocks · Change` : 'Make your pick'}
-                      </Text>
-                    </TouchableOpacity>
-                  )}
-                  {r4Started && myR4Pick != null && !allScored && (
-                    <Text style={[styles.bonusSubText, { paddingHorizontal: 0, paddingBottom: 4 }]}>
-                      Your pick: <Text style={{ color: '#f97316', fontWeight: '700' }}>{myR4Pick.wembyBlocks} blocks</Text>
-                    </Text>
-                  )}
-                  {isAdmin && r4Started && r4Complete && !allScored && (
-                    <TouchableOpacity
-                      style={[styles.bonusBtn, { backgroundColor: '#1e40af', marginTop: 8 }]}
-                      onPress={() => setShowR4ScoreModal(true)}
-                    >
-                      <Text style={styles.bonusBtnText}>Admin: Enter actual blocks</Text>
-                    </TouchableOpacity>
-                  )}
-                </View>
-              );
-            })()}
 
             {/* Series cards */}
             {roundSeries.map(s => {

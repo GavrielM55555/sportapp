@@ -16,6 +16,7 @@ import { useLocalSearchParams, Stack, useRouter } from 'expo-router';
 import { doc, onSnapshot, collection, query, where, getDocs, writeBatch, updateDoc, arrayRemove } from 'firebase/firestore';
 import { db } from '../../src/firebase/config';
 import { SCORED_COLLECTIONS } from '../../src/utils/groupTotals';
+import { groupTypeDef } from '../../src/groupTypes';
 import { Group, GroupMember } from '../../src/types';
 import { useAuthContext } from '../../src/context/AuthContext';
 import { GroupPredictionsTab } from '../../src/components/GroupPredictionsTab';
@@ -86,7 +87,7 @@ export default function GroupScreen() {
       alert('Failed to leave group.');
     }
   };
-  const typeLabel = group.type === 'playoff' ? '🏆 NBA Playoffs' : group.type === 'football' ? '⚽ Football' : '🏀 NBA Season';
+  const typeLabel = `${groupTypeDef(group.type).icon} ${groupTypeDef(group.type).label}`;
 
   const deleteGroup = async () => {
     const confirmed = typeof window !== 'undefined'

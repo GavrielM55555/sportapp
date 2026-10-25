@@ -19,6 +19,16 @@ function generateInviteCode(): string {
   return Math.random().toString(36).substring(2, 8).toUpperCase();
 }
 
+/** Season a new group belongs to: "2026-27" for NBA/football, "2026" for NFL/MLB/F1 */
+function seasonFor(type: GroupType): string {
+  const now = new Date();
+  const y = now.getFullYear(), m = now.getMonth();
+  if (type.startsWith('nfl')) return String(m < 6 ? y - 1 : y);   // Sep–Feb season
+  if (type.startsWith('mlb') || type === 'f1') return String(y);
+  const start = type === 'football' ? (m >= 6 ? y : y - 1) : (m >= 9 ? y : y - 1);
+  return `${start}-${String(start + 1).slice(2)}`;
+}
+
 export function useGroups() {
   const { user } = useAuthContext();
   const [groups, setGroups] = useState<Group[]>([]);
@@ -57,7 +67,7 @@ export function useGroups() {
       members: [member],
       memberUids: [user.uid],
       createdAt: Date.now(),
-      season: '2024-25',
+      season: seasonFor(type),
       type,
     };
 
